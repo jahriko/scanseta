@@ -8,8 +8,10 @@ import io
 import logging
 from datetime import datetime
 import os
+import asyncio
 from transformers import AutoProcessor, AutoModelForVision2Seq
 from peft import PeftModel
+from src.scrapers.pndf_scraper import PNDFScraper
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -45,29 +47,41 @@ class PrescriptionResponse(BaseModel):
     patient_name: Optional[str] = None
     date: Optional[str] = None
     processing_time: float
+    enriched: Optional[List[dict]] = None
+    can_enrich: bool = False
+
+
+class EnrichmentRequest(BaseModel):
+    drug_names: List[str]
 
 # Helper function to load Qwen VL with LoRA adapter
 def load_qwen_vl_with_lora(base_model_id: str, adapter_repo: Optional[str]):
-    """Load Qwen2.5-VL base model and attach LoRA adapter from Hugging Face"""
-    logger.info(f"Loading base model: {base_model_id}")
     processor = AutoProcessor.from_pretrained(base_model_id, trust_remote_code=True)
-    
-    logger.info("Loading model with FP16 precision")
+
+    dtype = torch.float16 if torch.cuda.is_available() else torch.float32
+
+    offload_dir = os.getenv("HF_OFFLOAD_DIR", "./offload")
+    os.makedirs(offload_dir, exist_ok=True)
+
+    # Helps some accelerate/transformers combos pick it up during dispatch
+    os.environ["HF_HOME"] = os.getenv("HF_HOME", os.path.abspath("./hf_home"))
+    os.environ["TRANSFORMERS_CACHE"] = os.getenv("TRANSFORMERS_CACHE", os.path.abspath("./hf_cache"))
+
     model = AutoModelForVision2Seq.from_pretrained(
         base_model_id,
         trust_remote_code=True,
-        torch_dtype=torch.float16 if torch.cuda.is_available() else torch.float32,
+        torch_dtype=dtype,
         device_map="auto",
+        offload_folder=offload_dir,   # transformers name
+        offload_dir=offload_dir,      # accelerate name (some versions surface this)
+        offload_state_dict=True,
+        low_cpu_mem_usage=True,
     )
-    
+
     if adapter_repo:
-        logger.info(f"Attaching LoRA adapter: {adapter_repo}")
         model = PeftModel.from_pretrained(model, adapter_repo)
-    else:
-        logger.info("No adapter repo provided. Using base model only.")
+
     model.eval()
-    
-    logger.info("Model and adapter loaded successfully")
     return processor, model
 
 # Model Configuration
@@ -163,9 +177,18 @@ class ModelConfig:
 # Initialize model config
 model_config = ModelConfig()
 
+async def initialize_pndf_cache():
+    """Background task to initialize/refresh PNDF cache on startup"""
+    try:
+        logger.info("Initializing PNDF cache...")
+        await PNDFScraper.refresh_cache()
+        logger.info("✓ PNDF cache initialization complete")
+    except Exception as e:
+        logger.warning(f"Could not initialize PNDF cache: {e}")
+
 @app.on_event("startup")
 async def startup_event():
-    """Load model on startup from environment variables"""
+    """Load model on startup from environment variables and refresh PNDF cache"""
     base_model = os.getenv("HF_BASE_MODEL", "Qwen/Qwen2.5-VL-7B-Instruct")
     adapter_repo = os.getenv("HF_ADAPTER_REPO")
     
@@ -178,6 +201,9 @@ async def startup_event():
             logger.warning("Model will need to be loaded manually via /load-model endpoint")
     else:
         logger.info("HF_ADAPTER_REPO not set. Model will need to be loaded via /load-model endpoint")
+    
+    # Initialize PNDF cache in background (non-blocking)
+    asyncio.create_task(initialize_pndf_cache())
 
 @app.get("/")
 async def root():
@@ -210,6 +236,25 @@ async def load_model(base_model: str, adapter_repo: Optional[str] = None):
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
+@app.post("/enrich-medications")
+async def enrich_medications(request: EnrichmentRequest):
+    """
+    Enrich extracted medication names with PNDF data
+    Returns official drug information, classifications, interactions, etc.
+    """
+    try:
+        logger.info(f"Enriching {len(request.drug_names)} medications with PNDF data")
+        enriched = await PNDFScraper.enrich_medications(request.drug_names)
+        
+        return {
+            "success": True,
+            "enriched_medications": enriched,
+            "count": len(enriched),
+        }
+    except Exception as e:
+        logger.error(f"Error enriching medications: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
 @app.post("/scan", response_model=PrescriptionResponse)
 async def scan_prescription(file: UploadFile = File(...)):
     """
@@ -236,11 +281,26 @@ async def scan_prescription(file: UploadFile = File(...)):
         # Parse the result (customize based on your model's output format)
         medications = parse_prescription_text(result["raw_text"])
         
+        # Extract drug names for enrichment
+        drug_names = [med.name for med in medications if med.name]
+        enriched_data = None
+        
+        # Automatically enrich with PNDF data if medications were extracted
+        if drug_names:
+            try:
+                enriched_data = await PNDFScraper.enrich_medications(drug_names)
+                logger.info(f"✓ Enriched {len(enriched_data)} medications")
+            except Exception as e:
+                logger.warning(f"Could not enrich medications: {e}")
+                enriched_data = None
+        
         return PrescriptionResponse(
             success=True,
             medications=medications,
             raw_text=result["raw_text"],
-            processing_time=result["processing_time"]
+            processing_time=result["processing_time"],
+            enriched=enriched_data,
+            can_enrich=len(drug_names) > 0 if drug_names else False
         )
         
     except Exception as e:
