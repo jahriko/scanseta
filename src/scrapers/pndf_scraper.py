@@ -1,9 +1,9 @@
 """
 Philippine National Drug Formulary (PNDF) Web Scraper
 Fetches and parses medication information from https://pnf.doh.gov.ph/
+Uses Playwright to handle JavaScript-rendered content (Next.js with Radix dialogs)
 """
 
-import httpx
 import json
 import logging
 import asyncio
@@ -15,56 +15,200 @@ import re
 
 logger = logging.getLogger(__name__)
 
+try:
+    from playwright.async_api import async_playwright, Browser, Page, TimeoutError as PlaywrightTimeoutError
+    PLAYWRIGHT_AVAILABLE = True
+except ImportError:
+    PLAYWRIGHT_AVAILABLE = False
+    logger.warning("Playwright not installed. Install with: pip install playwright && playwright install chromium")
+
 CACHE_DIR = Path("./data")
 CACHE_PATH = CACHE_DIR / "pndf_cache.json"
 PNDF_BASE_URL = "https://pnf.doh.gov.ph"
 
 
 class PNDFScraper:
-    """Scraper for Philippine National Drug Formulary"""
+    """Scraper for Philippine National Drug Formulary using Playwright for JS-rendered content"""
 
-    # Request delay (ms) between searches to respect server
+    # Request delay (seconds) between searches to respect server
     REQUEST_DELAY = 0.5
+    
+    # Shared browser instance (initialized lazily)
+    _browser: Optional[Browser] = None
+    _playwright_context = None
+
+    @staticmethod
+    async def _get_browser() -> Browser:
+        """Get or create a shared browser instance"""
+        if PNDFScraper._browser is None:
+            if not PLAYWRIGHT_AVAILABLE:
+                raise RuntimeError("Playwright not installed. Run: pip install playwright && playwright install chromium")
+            
+            playwright = await async_playwright().start()
+            PNDFScraper._playwright_context = playwright
+            PNDFScraper._browser = await playwright.chromium.launch(
+                headless=True,
+                args=['--no-sandbox', '--disable-setuid-sandbox']  # For server environments
+            )
+        return PNDFScraper._browser
+
+    @staticmethod
+    async def _close_browser():
+        """Close the shared browser instance"""
+        if PNDFScraper._browser:
+            await PNDFScraper._browser.close()
+            PNDFScraper._browser = None
+        if PNDFScraper._playwright_context:
+            await PNDFScraper._playwright_context.stop()
+            PNDFScraper._playwright_context = None
+
+    @staticmethod
+    async def _handle_radix_dialog(page: Page) -> None:
+        """
+        Handle Radix dialog that appears on page refresh
+        Looks for common dialog close buttons/selectors
+        """
+        try:
+            # Wait a bit for dialog to appear
+            await page.wait_for_timeout(500)
+            
+            # Common Radix dialog close button selectors
+            dialog_selectors = [
+                'button[aria-label="Close"]',
+                'button[data-radix-dialog-close]',
+                '[role="dialog"] button:has-text("Close")',
+                '[role="dialog"] button:has-text("×")',
+                'button:has-text("Dismiss")',
+                '[data-radix-portal] button',
+                # Generic dialog overlay close
+                'button[class*="close"]',
+                'button[class*="Close"]',
+            ]
+            
+            for selector in dialog_selectors:
+                try:
+                    close_button = page.locator(selector).first
+                    if await close_button.is_visible(timeout=1000):
+                        logger.info(f"Found dialog close button: {selector}")
+                        await close_button.click()
+                        await page.wait_for_timeout(300)  # Wait for dialog to close
+                        logger.info("✓ Dialog closed")
+                        return
+                except PlaywrightTimeoutError:
+                    continue
+            
+            logger.debug("No Radix dialog found (or already closed)")
+        except Exception as e:
+            logger.debug(f"Error handling dialog (may not exist): {e}")
 
     @staticmethod
     async def search_drug(drug_name: str) -> Optional[Dict]:
         """
-        Search for a drug on PNDF website and parse the results
+        Search for a drug on PNDF website using Playwright
+        Handles JavaScript-rendered content and Radix dialogs
         
         Returns dict with drug information or None if not found
         """
+        if not PLAYWRIGHT_AVAILABLE:
+            logger.error("Playwright not available. Install with: pip install playwright && playwright install chromium")
+            return None
+
         try:
-            async with httpx.AsyncClient(timeout=30.0) as client:
-                # Try to fetch search results
-                # PNDF search likely uses a POST or specific endpoint
-                search_url = f"{PNDF_BASE_URL}/"
+            browser = await PNDFScraper._get_browser()
+            page = await browser.new_page()
+            
+            logger.info(f"Searching PNDF for: {drug_name}")
+            
+            # Navigate to the site
+            await page.goto(PNDF_BASE_URL, wait_until="networkidle", timeout=30000)
+            
+            # Handle Radix dialog that appears on refresh
+            await PNDFScraper._handle_radix_dialog(page)
+            
+            # Try to find and interact with search functionality
+            # Common search selectors for Next.js apps
+            search_selectors = [
+                'input[type="search"]',
+                'input[placeholder*="Search"]',
+                'input[placeholder*="search"]',
+                'input[name="search"]',
+                'input[name="q"]',
+                'input[class*="search"]',
+                '[data-testid="search"]',
+            ]
+            
+            search_input = None
+            for selector in search_selectors:
+                try:
+                    search_input = page.locator(selector).first
+                    if await search_input.is_visible(timeout=2000):
+                        logger.info(f"Found search input: {selector}")
+                        break
+                except PlaywrightTimeoutError:
+                    continue
+            
+            if not search_input:
+                logger.warning("Could not find search input. Attempting to parse current page...")
+            else:
+                # Type drug name in search
+                await search_input.fill(drug_name)
+                await page.wait_for_timeout(500)
                 
-                params = {
-                    "q": drug_name,
-                    "searchtype": "drug",  # Adjust based on actual site structure
-                }
-
-                logger.info(f"Searching PNDF for: {drug_name}")
+                # Try to submit search (look for submit button or press Enter)
+                submit_selectors = [
+                    'button[type="submit"]',
+                    'button:has-text("Search")',
+                    'button[aria-label*="Search"]',
+                    '[data-testid="search-submit"]',
+                ]
                 
-                # Try GET request first
-                response = await client.get(search_url, params=params)
-                response.raise_for_status()
+                submitted = False
+                for selector in submit_selectors:
+                    try:
+                        submit_button = page.locator(selector).first
+                        if await submit_button.is_visible(timeout=1000):
+                            await submit_button.click()
+                            submitted = True
+                            break
+                    except PlaywrightTimeoutError:
+                        continue
+                
+                if not submitted:
+                    # Try pressing Enter on search input
+                    await search_input.press("Enter")
+                    submitted = True
+                
+                # Wait for results to load (common result container selectors)
+                try:
+                    await page.wait_for_selector(
+                        '[class*="result"], [class*="Result"], [data-testid*="result"], article, main',
+                        timeout=10000
+                    )
+                    await page.wait_for_timeout(1000)  # Extra wait for dynamic content
+                except PlaywrightTimeoutError:
+                    logger.warning("Results may not have loaded, proceeding anyway...")
+            
+            # Get page HTML after JavaScript execution
+            html_content = await page.content()
+            
+            # Close the page
+            await page.close()
+            
+            # Parse HTML with BeautifulSoup
+            soup = BeautifulSoup(html_content, "lxml")
+            
+            # Extract drug information
+            drug_info = PNDFScraper._parse_drug_page(soup, drug_name)
 
-                # Parse HTML response
-                soup = BeautifulSoup(response.text, "lxml")
+            if drug_info:
+                logger.info(f"✓ Found drug: {drug_name}")
+                return drug_info
+            else:
+                logger.info(f"✗ Drug not found: {drug_name}")
+                return None
 
-                # Extract drug information from parsed HTML
-                drug_info = PNDFScraper._parse_drug_page(soup, drug_name)
-
-                if drug_info:
-                    logger.info(f"✓ Found drug: {drug_name}")
-                    return drug_info
-                else:
-                    logger.info(f"✗ Drug not found: {drug_name}")
-                    return None
-
-        except httpx.HTTPError as e:
-            logger.error(f"HTTP error searching for {drug_name}: {e}")
+        except PlaywrightTimeoutError as e:
+            logger.error(f"Timeout error searching for {drug_name}: {e}")
             return None
         except Exception as e:
             logger.error(f"Error searching for {drug_name}: {e}")
@@ -296,3 +440,9 @@ class PNDFScraper:
 
         await PNDFScraper.save_cache(list(cache_dict.values()))
         logger.info(f"✓ Cache refresh complete. Total drugs: {len(cache_dict)}")
+
+    @staticmethod
+    async def cleanup():
+        """Clean up browser resources (call on server shutdown)"""
+        await PNDFScraper._close_browser()
+        logger.info("✓ PNDF scraper cleanup complete")

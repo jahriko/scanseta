@@ -205,6 +205,15 @@ async def startup_event():
     # Initialize PNDF cache in background (non-blocking)
     asyncio.create_task(initialize_pndf_cache())
 
+@app.on_event("shutdown")
+async def shutdown_event():
+    """Clean up resources on server shutdown"""
+    try:
+        await PNDFScraper.cleanup()
+        logger.info("✓ Server shutdown cleanup complete")
+    except Exception as e:
+        logger.warning(f"Error during shutdown cleanup: {e}")
+
 @app.get("/")
 async def root():
     return {
@@ -222,7 +231,7 @@ async def health_check():
         "gpu_available": torch.cuda.is_available()
     }
 
-@app.post("/load-model")
+@app.get("/load-model")
 async def load_model(base_model: str, adapter_repo: Optional[str] = None):
     """Manually load or reload the model with base model and adapter"""
     try:
