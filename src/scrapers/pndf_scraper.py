@@ -184,9 +184,43 @@ class PNDFScraper:
             
             logger.info(f"Searching PNDF for: {drug_name}")
             
-            # Navigate to the site
-            await page.goto(PNDF_BASE_URL, wait_until="domcontentloaded", timeout=60000)
-            logger.info("Page loaded, checking for Cloudflare challenge...")
+            # Navigate to the site with retry logic for network errors
+            max_retries = 3
+            retry_delay = 2  # seconds
+            navigation_success = False
+            
+            for attempt in range(1, max_retries + 1):
+                try:
+                    logger.info(f"Attempting to navigate to {PNDF_BASE_URL} (attempt {attempt}/{max_retries})...")
+                    await page.goto(PNDF_BASE_URL, wait_until="domcontentloaded", timeout=60000)
+                    navigation_success = True
+                    logger.info("Page loaded, checking for Cloudflare challenge...")
+                    break
+                except Exception as nav_error:
+                    error_msg = str(nav_error)
+                    # Check if it's a network/DNS error
+                    if "ERR_NAME_NOT_RESOLVED" in error_msg or "net::" in error_msg:
+                        if attempt < max_retries:
+                            wait_time = retry_delay * attempt
+                            logger.warning(
+                                f"Network error (attempt {attempt}/{max_retries}): {error_msg}. "
+                                f"Retrying in {wait_time} seconds..."
+                            )
+                            await asyncio.sleep(wait_time)
+                        else:
+                            logger.error(
+                                f"Failed to resolve DNS or connect to {PNDF_BASE_URL} after {max_retries} attempts. "
+                                f"Error: {error_msg}. Please check your internet connection and verify the site is accessible."
+                            )
+                            return None
+                    else:
+                        # For non-network errors, don't retry
+                        logger.error(f"Navigation error: {error_msg}")
+                        raise
+            
+            if not navigation_success:
+                logger.error(f"Failed to navigate to {PNDF_BASE_URL} after {max_retries} attempts")
+                return None
             
             # Wait a bit for page to fully load
             await page.wait_for_timeout(2000)
@@ -315,13 +349,136 @@ class PNDFScraper:
             # Wait for navigation/network activity to settle
             try:
                 await page.wait_for_load_state("networkidle", timeout=10000)
-                await page.wait_for_timeout(1500)  # Extra wait for dynamic content to render
+                await page.wait_for_timeout(2000)  # Extra wait for dynamic content to render
                 logger.info("Waiting for search results to load...")
             except PlaywrightTimeoutError:
                 logger.warning("Page may still be loading, proceeding anyway...")
             
-            # Get page HTML after JavaScript execution
+            # Wait a bit more for search results to appear in DOM
+            await page.wait_for_timeout(1000)
+            
+            # After search, there's a disclosure/accordion component that needs to be clicked to expand
+            # The button contains an h1 with the drug name and has a chevron icon
+            logger.info("Looking for disclosure/accordion button to expand drug details...")
+            try:
+                # Try multiple selectors to find the disclosure button
+                disclosure_button = None
+                button_selector_used = None
+                drug_name_upper = drug_name.upper()
+                
+                # Option 1: Button with h1 containing drug name (most specific)
+                try:
+                    button_selector_used = f'button:has(h1:has-text("{drug_name_upper}"))'
+                    disclosure_button = page.locator(button_selector_used).first
+                    if await disclosure_button.is_visible(timeout=2000):
+                        logger.info(f"Found disclosure button (h1 selector) for {drug_name}")
+                except PlaywrightTimeoutError:
+                    # Option 2: Button with cursor-pointer class containing drug name
+                    try:
+                        button_selector_used = f'button.cursor-pointer:has-text("{drug_name_upper}")'
+                        disclosure_button = page.locator(button_selector_used).first
+                        if await disclosure_button.is_visible(timeout=2000):
+                            logger.info(f"Found disclosure button (cursor-pointer selector) for {drug_name}")
+                    except PlaywrightTimeoutError:
+                        # Option 3: Any button containing drug name (case-insensitive)
+                        try:
+                            button_selector_used = f'button:has-text("{drug_name}")'
+                            disclosure_button = page.locator(button_selector_used).first
+                            if await disclosure_button.is_visible(timeout=2000):
+                                logger.info(f"Found disclosure button (generic selector) for {drug_name}")
+                        except PlaywrightTimeoutError:
+                            logger.warning("Could not find disclosure button with any selector")
+                
+                if disclosure_button:
+                    logger.info(f"Preparing to click disclosure button for {drug_name}...")
+                    
+                    # Wait for button to be attached and visible
+                    try:
+                        await disclosure_button.wait_for(state="attached", timeout=3000)
+                        await disclosure_button.wait_for(state="visible", timeout=3000)
+                    except PlaywrightTimeoutError:
+                        logger.warning("Button found but not visible/attached, trying anyway...")
+                    
+                    # Scroll the button into view first
+                    try:
+                        await disclosure_button.scroll_into_view_if_needed(timeout=2000)
+                        await page.wait_for_timeout(500)
+                    except Exception as e:
+                        logger.debug(f"Could not scroll button into view: {e}")
+                    
+                    # Try clicking with multiple fallback methods
+                    logger.info(f"Clicking disclosure button to expand {drug_name} details...")
+                    clicked = False
+                    
+                    # Method 1: Normal click (shorter timeout to fail faster)
+                    try:
+                        await disclosure_button.click(timeout=3000)
+                        logger.info("Successfully clicked disclosure button (normal)")
+                        clicked = True
+                    except Exception as click_error:
+                        logger.debug(f"Normal click failed: {click_error}")
+                    
+                    # Method 2: Force click if normal failed
+                    if not clicked:
+                        try:
+                            await disclosure_button.click(timeout=3000, force=True)
+                            logger.info("Successfully clicked disclosure button (force)")
+                            clicked = True
+                        except Exception as force_error:
+                            logger.debug(f"Force click failed: {force_error}")
+                    
+                    # Method 3: JavaScript click as last resort (with timeout protection)
+                    if not clicked:
+                        try:
+                            # Check if element exists before trying to evaluate
+                            element_count = await disclosure_button.count()
+                            if element_count > 0:
+                                # Try to get the element's index or use a more direct approach
+                                # Use page.evaluate with a simpler approach - find by text content
+                                escaped_drug_name = drug_name_upper.replace('"', '\\"')
+                                await page.evaluate(f"""
+                                    (function() {{
+                                        // Find button by searching for h1 with drug name
+                                        const buttons = Array.from(document.querySelectorAll('button'));
+                                        const targetButton = buttons.find(btn => {{
+                                            const h1 = btn.querySelector('h1');
+                                            return h1 && h1.textContent.trim().toUpperCase() === '{escaped_drug_name}';
+                                        }});
+                                        if (targetButton) {{
+                                            targetButton.click();
+                                            return true;
+                                        }}
+                                        return false;
+                                    }})();
+                                """)
+                                logger.info("Successfully clicked disclosure button (JavaScript)")
+                                clicked = True
+                            else:
+                                logger.warning("Button not found in DOM for JavaScript click")
+                        except Exception as js_error:
+                            logger.warning(f"All click methods failed: {js_error}")
+                    
+                    await page.wait_for_timeout(1500)  # Wait for content to expand
+                    logger.info("Disclosure expanded, waiting for content to render...")
+                    await page.wait_for_timeout(1500)  # Extra wait for dynamic content to fully render
+                else:
+                    logger.warning("Disclosure button not found - content may already be expanded")
+                    
+            except Exception as e:
+                logger.warning(f"Error finding/clicking disclosure button: {e}")
+            
+            # Get page HTML after JavaScript execution and expansion
             html_content = await page.content()
+            
+            # Debug: Save HTML to file for inspection (optional, can be removed later)
+            debug_html_path = CACHE_DIR / f"debug_{drug_name}_page.html"
+            try:
+                CACHE_DIR.mkdir(exist_ok=True)
+                with open(debug_html_path, "w", encoding="utf-8") as f:
+                    f.write(html_content)
+                logger.debug(f"Saved page HTML to {debug_html_path} for debugging")
+            except Exception as e:
+                logger.debug(f"Could not save debug HTML: {e}")
             
             # Parse HTML with BeautifulSoup
             soup = BeautifulSoup(html_content, "lxml")
@@ -340,7 +497,21 @@ class PNDFScraper:
             logger.error(f"Timeout error searching for {drug_name}: {e}")
             return None
         except Exception as e:
-            logger.error(f"Error searching for {drug_name}: {e}")
+            error_msg = str(e)
+            # Provide more helpful error messages for common network issues
+            if "ERR_NAME_NOT_RESOLVED" in error_msg:
+                logger.error(
+                    f"DNS resolution failed for {PNDF_BASE_URL}. "
+                    f"This could indicate: network connectivity issues, DNS problems, or the site may be down. "
+                    f"Error: {error_msg}"
+                )
+            elif "net::" in error_msg:
+                logger.error(
+                    f"Network error while searching for {drug_name}: {error_msg}. "
+                    f"Please check your internet connection and try again."
+                )
+            else:
+                logger.error(f"Error searching for {drug_name}: {error_msg}")
             return None
         finally:
             # Always close the page and context to free resources
@@ -384,13 +555,28 @@ class PNDFScraper:
                 "scraped_at": datetime.now().isoformat(),
             }
 
-            # Try to find drug name section
+            # Try to find drug name section - be more flexible
+            page_text = soup.get_text().lower()
+            drug_name_lower = drug_name.lower()
+            
+            # Check if drug name appears anywhere on the page
+            if drug_name_lower not in page_text:
+                logger.debug(f"Drug name '{drug_name}' not found anywhere in page text")
+                # Log a sample of page text for debugging
+                page_text_sample = soup.get_text()[:500]
+                logger.debug(f"Page text sample: {page_text_sample}")
+                return None
+            
+            logger.debug(f"Drug name '{drug_name}' found in page text, proceeding with extraction")
+            
+            # Try to find drug section
             drug_section = soup.find(
-                lambda tag: tag.name and drug_name.lower() in tag.get_text().lower()
+                lambda tag: tag.name and drug_name_lower in tag.get_text().lower()
             )
 
             if not drug_section:
-                return None
+                logger.debug("Could not find specific drug section, but drug name exists in page - will try to extract anyway")
+                # Continue anyway - maybe the page structure is different
 
             # Extract ATC Code
             atc_match = re.search(r"ATC Code[:\s]+([A-Z]\d{2}[A-Z]{2}\d{2})", soup.get_text())

@@ -70,10 +70,9 @@ def load_qwen_vl_with_lora(base_model_id: str, adapter_repo: Optional[str]):
     model = AutoModelForVision2Seq.from_pretrained(
         base_model_id,
         trust_remote_code=True,
-        torch_dtype=dtype,
+        dtype=dtype,
         device_map="auto",
         offload_folder=offload_dir,   # transformers name
-        offload_dir=offload_dir,      # accelerate name (some versions surface this)
         offload_state_dict=True,
         low_cpu_mem_usage=True,
     )
