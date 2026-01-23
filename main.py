@@ -9,9 +9,11 @@ import logging
 from datetime import datetime
 import os
 import asyncio
+import re
 from transformers import AutoProcessor, AutoModelForVision2Seq
 from peft import PeftModel
 from src.scrapers.pndf_scraper import PNDFScraper
+from src.post_processing import DrugPostProcessor, PostProcessingConfig
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -38,6 +40,12 @@ class MedicationInfo(BaseModel):
     dosage: Optional[str] = None
     frequency: Optional[str] = None
     confidence: float
+    original_name: Optional[str] = None
+    flags: List[str] = []
+    match_method: Optional[str] = None
+    edit_distance: Optional[int] = None
+    similarity: Optional[float] = None
+    plausibility: Optional[float] = None
 
 class PrescriptionResponse(BaseModel):
     success: bool
@@ -226,6 +234,22 @@ class ModelConfig:
 # Initialize model config
 model_config = ModelConfig()
 
+# Initialize post-processor
+try:
+    post_processor_config = PostProcessingConfig(
+        lexicon_path=os.getenv("LEXICON_PATH", "./data/drug_lexicon.txt"),
+        max_edit_distance=int(os.getenv("MAX_EDIT_DISTANCE", "2")),
+        min_similarity=float(os.getenv("MIN_SIMILARITY", "0.86")),
+        ngram_n=int(os.getenv("NGRAM_N", "3")),
+        plausibility_threshold=float(os.getenv("PLAUSIBILITY_THRESHOLD", "-1.0")),
+        max_candidates=int(os.getenv("MAX_CANDIDATES", "10"))
+    )
+    post_processor = DrugPostProcessor(post_processor_config)
+    logger.info("✓ Drug post-processor initialized")
+except Exception as e:
+    logger.warning(f"Could not initialize post-processor: {e}")
+    post_processor = None
+
 async def initialize_pndf_cache():
     """Background task to initialize/refresh PNDF cache on startup"""
     try:
@@ -343,8 +367,8 @@ async def scan_prescription(file: UploadFile = File(...)):
         # Parse the result (customize based on your model's output format)
         medications = parse_prescription_text(result["raw_text"])
         
-        # Extract drug names for enrichment
-        drug_names = [med.name for med in medications if med.name]
+        # Extract drug names for enrichment (skip OOV tokens)
+        drug_names = [med.name for med in medications if med.name and "OOV" not in med.flags]
         enriched_data = None
         
         # Automatically enrich with PNDF data if medications were extracted
@@ -385,11 +409,26 @@ async def scan_batch(files: List[UploadFile] = File(...)):
             result = model_config.predict(image)
             medications = parse_prescription_text(result["raw_text"])
             
+            # Extract drug names for enrichment
+            drug_names = [med.name for med in medications if med.name and "OOV" not in med.flags]
+            enriched_data = None
+            
+            # Automatically enrich with PNDF data if medications were extracted
+            if drug_names:
+                try:
+                    enriched_data = await PNDFScraper.enrich_medications(drug_names)
+                    logger.info(f"✓ Enriched {len(enriched_data)} medications for {file.filename}")
+                except Exception as e:
+                    logger.warning(f"Could not enrich medications for {file.filename}: {e}")
+            
             results.append({
                 "filename": file.filename,
                 "success": True,
                 "medications": medications,
-                "processing_time": result["processing_time"]
+                "raw_text": result["raw_text"],
+                "processing_time": result["processing_time"],
+                "enriched": enriched_data,
+                "can_enrich": len(drug_names) > 0 if drug_names else False
             })
         except Exception as e:
             results.append({
@@ -403,30 +442,99 @@ async def scan_batch(files: List[UploadFile] = File(...)):
 def parse_prescription_text(text: str) -> List[MedicationInfo]:
     """
     Parse the model output into structured medication information
-    Customize this based on your model's output format
+    Uses post-processing for fuzzy matching and canonicalization
     """
-    # This is a placeholder - adjust based on your model's actual output
-    medications = []
+    # Split by common delimiters (comma, semicolon, newline)
+    raw_tokens = re.split(r'[,;\n]', text)
     
-    # Example parsing logic (you'll need to customize this)
-    lines = text.split('\n')
-    for line in lines:
-        if any(keyword in line.lower() for keyword in ['medication', 'drug', 'prescription']):
-            medications.append(MedicationInfo(
-                name=line.strip(),
+    # Clean each token
+    cleaned_tokens = []
+    for token in raw_tokens:
+        token = token.strip()
+        if not token:
+            continue
+        
+        # Remove dosage units and numbers (mg, ml, tabs, etc.)
+        token = re.sub(r'\d+\s*(mg|ml|mcg|g|tabs?|capsules?|units?|iu)\b', '', token, flags=re.IGNORECASE)
+        
+        # Remove frequency indicators
+        token = re.sub(r'\b(bid|tid|qid|daily|once|twice|thrice|od|bd|qd)\b', '', token, flags=re.IGNORECASE)
+        
+        # Remove standalone numbers
+        token = re.sub(r'\b\d+\b', '', token)
+        
+        # Clean up extra whitespace
+        token = re.sub(r'\s+', ' ', token).strip()
+        
+        if token and len(token) > 1:  # Skip single characters
+            cleaned_tokens.append(token)
+    
+    # Remove duplicates while preserving order
+    seen = set()
+    unique_tokens = []
+    for token in cleaned_tokens:
+        token_lower = token.lower()
+        if token_lower not in seen:
+            seen.add(token_lower)
+            unique_tokens.append(token)
+    
+    if not unique_tokens:
+        return [
+            MedicationInfo(
+                name="Unable to parse medications",
                 dosage=None,
                 frequency=None,
-                confidence=0.9
+                confidence=0.0,
+                flags=["PARSE_ERROR"]
+            )
+        ]
+    
+    # Post-process tokens if processor is available
+    medications = []
+    
+    if post_processor:
+        try:
+            results = post_processor.process_tokens(unique_tokens)
+            
+            for result in results:
+                # Use canonical name if matched, otherwise original
+                final_name = result.canonical_name if result.canonical_name else result.original_name
+                
+                medications.append(MedicationInfo(
+                    name=final_name,
+                    dosage=None,
+                    frequency=None,
+                    confidence=0.9,
+                    original_name=result.original_name,
+                    flags=result.flags,
+                    match_method=result.match_method,
+                    edit_distance=result.edit_distance,
+                    similarity=result.similarity,
+                    plausibility=result.plausibility
+                ))
+        except Exception as e:
+            logger.error(f"Post-processing error: {e}")
+            # Fallback: return tokens without post-processing
+            for token in unique_tokens:
+                medications.append(MedicationInfo(
+                    name=token,
+                    dosage=None,
+                    frequency=None,
+                    confidence=0.9,
+                    flags=["POST_PROCESS_ERROR"]
+                ))
+    else:
+        # No post-processor available
+        for token in unique_tokens:
+            medications.append(MedicationInfo(
+                name=token,
+                dosage=None,
+                frequency=None,
+                confidence=0.9,
+                flags=["NO_POST_PROCESSOR"]
             ))
     
-    return medications if medications else [
-        MedicationInfo(
-            name="Unable to parse medications",
-            dosage=None,
-            frequency=None,
-            confidence=0.0
-        )
-    ]
+    return medications
 
 if __name__ == "__main__":
     import uvicorn
