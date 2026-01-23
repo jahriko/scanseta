@@ -67,15 +67,48 @@ def load_qwen_vl_with_lora(base_model_id: str, adapter_repo: Optional[str]):
     os.environ["HF_HOME"] = os.getenv("HF_HOME", os.path.abspath("./hf_home"))
     os.environ["TRANSFORMERS_CACHE"] = os.getenv("TRANSFORMERS_CACHE", os.path.abspath("./hf_cache"))
 
-    model = AutoModelForVision2Seq.from_pretrained(
-        base_model_id,
-        trust_remote_code=True,
-        dtype=dtype,
-        device_map="auto",
-        offload_folder=offload_dir,   # transformers name
-        offload_state_dict=True,
-        low_cpu_mem_usage=True,
-    )
+    from_pretrained_kwargs = {
+        "trust_remote_code": True,
+        "dtype": dtype,
+        "device_map": "auto",
+        "offload_state_dict": True,
+        "low_cpu_mem_usage": True,
+        "offload_folder": offload_dir,
+        "offload_dir": offload_dir,
+    }
+
+    try:
+        model = AutoModelForVision2Seq.from_pretrained(
+            base_model_id,
+            **from_pretrained_kwargs,
+        )
+    except TypeError as exc:
+        if "offload_dir" in str(exc):
+            from_pretrained_kwargs.pop("offload_dir", None)
+        elif "offload_folder" in str(exc):
+            from_pretrained_kwargs.pop("offload_folder", None)
+        else:
+            raise
+        model = AutoModelForVision2Seq.from_pretrained(
+            base_model_id,
+            **from_pretrained_kwargs,
+        )
+    except RuntimeError as exc:
+        if "offload_dir" not in str(exc):
+            raise
+        logger.warning(
+            "Auto device_map requires offload_dir. Falling back to CPU load."
+        )
+        fallback_kwargs = {
+            "trust_remote_code": True,
+            "dtype": torch.float32,
+            "device_map": "cpu",
+            "low_cpu_mem_usage": True,
+        }
+        model = AutoModelForVision2Seq.from_pretrained(
+            base_model_id,
+            **fallback_kwargs,
+        )
 
     if adapter_repo:
         model = PeftModel.from_pretrained(model, adapter_repo)
@@ -101,6 +134,23 @@ class ModelConfig:
         except Exception as e:
             logger.error(f"Error loading model: {e}")
             raise
+    
+    def get_status(self) -> dict:
+        model_loaded = self.model is not None
+        status = {
+            "model_loaded": model_loaded,
+            "device": self.device,
+            "gpu_available": torch.cuda.is_available(),
+        }
+        if torch.cuda.is_available():
+            status["gpu_name"] = torch.cuda.get_device_name(0)
+            status["gpu_memory_allocated_mb"] = round(torch.cuda.memory_allocated(0) / 1024**2, 2)
+            status["gpu_memory_reserved_mb"] = round(torch.cuda.memory_reserved(0) / 1024**2, 2)
+        if model_loaded:
+            status["model_dtype"] = str(next(self.model.parameters()).dtype)
+            status["model_device"] = str(next(self.model.parameters()).device)
+            status["hf_device_map"] = getattr(self.model, "hf_device_map", None)
+        return status
 
     def predict(self, image: Image.Image) -> dict:
         """Run inference on prescription image using Qwen VL chat template"""
@@ -229,6 +279,10 @@ async def health_check():
         "device": model_config.device,
         "gpu_available": torch.cuda.is_available()
     }
+
+@app.get("/model-status")
+async def model_status():
+    return model_config.get_status()
 
 @app.get("/load-model")
 async def load_model(base_model: str, adapter_repo: Optional[str] = None):
