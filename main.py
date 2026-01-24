@@ -263,17 +263,17 @@ async def initialize_pndf_cache():
 async def startup_event():
     """Load model on startup from environment variables and refresh PNDF cache"""
     base_model = os.getenv("HF_BASE_MODEL", "Qwen/Qwen2.5-VL-7B-Instruct")
-    adapter_repo = os.getenv("HF_ADAPTER_REPO")
+    adapter_repo = os.getenv("HF_ADAPTER_REPO", "scanseta/qwen_prescription_model")
     
-    if adapter_repo:
-        try:
-            logger.info(f"Loading model on startup: {base_model} + {adapter_repo}")
-            model_config.load_model(base_model, adapter_repo)
-        except Exception as e:
-            logger.warning(f"Could not load model on startup: {e}")
-            logger.warning("Model will need to be loaded manually via /load-model endpoint")
-    else:
-        logger.info("HF_ADAPTER_REPO not set. Model will need to be loaded via /load-model endpoint")
+    # Always load model on startup (fail fast if it fails)
+    try:
+        logger.info(f"Loading model on startup: {base_model} + {adapter_repo}")
+        model_config.load_model(base_model, adapter_repo)
+        logger.info("✓ Model loaded successfully on startup")
+    except Exception as e:
+        logger.error(f"❌ Failed to load model on startup: {e}")
+        logger.error("Server will not start without a loaded model")
+        raise RuntimeError(f"Failed to load model: {e}") from e
     
     # Initialize PNDF cache in background (non-blocking)
     asyncio.create_task(initialize_pndf_cache())
