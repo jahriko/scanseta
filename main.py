@@ -119,7 +119,11 @@ def load_qwen_vl_with_lora(base_model_id: str, adapter_repo: Optional[str]):
         )
 
     if adapter_repo:
+        logger.info(f"Loading LoRA adapter: {adapter_repo}")
         model = PeftModel.from_pretrained(model, adapter_repo)
+        logger.info("✓ LoRA adapter loaded successfully")
+    else:
+        logger.warning("⚠️  No adapter specified - using base model only (lower accuracy for prescriptions)")
 
     model.eval()
     return processor, model
@@ -132,12 +136,21 @@ class ModelConfig:
         self.processor = None
         logger.info(f"Using device: {self.device}")
     
-    def load_model(self, base_model: str, adapter_repo: Optional[str]):
-        """Load Qwen2.5-VL base model with LoRA adapter"""
+    def load_model(self, base_model: str, adapter_repo: Optional[str] = None):
+        """Load Qwen2.5-VL base model with LoRA adapter
+        
+        For best results, always use the prescription-specific adapter.
+        If adapter_repo is None, defaults to scanseta/qwen_prescription_model.
+        """
+        # Default to prescription adapter for best results
+        if adapter_repo is None:
+            adapter_repo = "scanseta/qwen_prescription_model"
+            logger.info("No adapter specified, using default prescription adapter for best results")
+        
         try:
             logger.info(f"Loading base model: {base_model} with adapter: {adapter_repo}")
             self.processor, self.model = load_qwen_vl_with_lora(base_model, adapter_repo)
-            logger.info("Model loaded successfully")
+            logger.info("✓ Model loaded successfully with prescription adapter")
             
         except Exception as e:
             logger.error(f"Error loading model: {e}")
@@ -309,8 +322,21 @@ async def model_status():
     return model_config.get_status()
 
 @app.get("/load-model")
-async def load_model(base_model: str, adapter_repo: Optional[str] = None):
-    """Manually load or reload the model with base model and adapter"""
+async def load_model(
+    base_model: Optional[str] = None, 
+    adapter_repo: Optional[str] = None
+):
+    """
+    Manually load or reload the model with base model and adapter.
+    If base_model is not provided, uses default: Qwen/Qwen2.5-VL-7B-Instruct
+    If adapter_repo is not provided, uses default: scanseta/qwen_prescription_model
+    """
+    # Use defaults if not provided
+    if base_model is None:
+        base_model = os.getenv("HF_BASE_MODEL", "Qwen/Qwen2.5-VL-7B-Instruct")
+    if adapter_repo is None:
+        adapter_repo = os.getenv("HF_ADAPTER_REPO", "scanseta/qwen_prescription_model")
+    
     try:
         model_config.load_model(base_model, adapter_repo)
         return {
