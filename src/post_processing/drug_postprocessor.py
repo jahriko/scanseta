@@ -95,9 +95,10 @@ class CandidateGenerator:
         # Build n-gram inverted index for fast candidate generation
         self.ngram_index = self._build_ngram_index()
     
-    def _build_ngram_index(self, n: int = 3) -> Dict[str, Set[str]]:
+    def _build_ngram_index(self) -> Dict[str, Set[str]]:
         """Build inverted index: n-gram -> set of normalized drug names"""
         index = defaultdict(set)
+        n = self.config.ngram_n  # Use config value instead of hardcoded 3
         
         for normalized in self.normalized_to_canonical.keys():
             ngrams = self._extract_ngrams(normalized, n)
@@ -117,8 +118,8 @@ class CandidateGenerator:
         """Generate candidate matches using n-gram overlap"""
         normalized_token = LexiconLoader.normalize(token)
         
-        # Extract n-grams from token
-        token_ngrams = self._extract_ngrams(normalized_token, 3)
+        # Extract n-grams from token using config value
+        token_ngrams = self._extract_ngrams(normalized_token, self.config.ngram_n)
         
         # Find candidates with overlapping n-grams
         candidate_scores = defaultdict(int)
@@ -154,10 +155,8 @@ class CandidateGenerator:
         if not candidates:
             return None, None, None, None
         
-        best_canonical = None
-        best_method = None
-        best_edit_dist = float('inf')
-        best_similarity = 0.0
+        # Collect all candidates that meet either threshold
+        valid_candidates = []
         
         for candidate in candidates:
             # Compute edit distance
@@ -166,24 +165,34 @@ class CandidateGenerator:
             # Compute similarity
             similarity = SequenceMatcher(None, normalized_token, candidate).ratio()
             
-            # Check if meets threshold
-            if edit_dist <= self.config.max_edit_distance:
-                if edit_dist < best_edit_dist:
-                    best_canonical = self.normalized_to_canonical[candidate]
-                    best_method = "edit_distance"
-                    best_edit_dist = edit_dist
-                    best_similarity = similarity
-            elif similarity >= self.config.min_similarity:
-                if similarity > best_similarity:
-                    best_canonical = self.normalized_to_canonical[candidate]
-                    best_method = "similarity"
-                    best_edit_dist = edit_dist
-                    best_similarity = similarity
+            # Check if meets either threshold
+            meets_edit_threshold = edit_dist <= self.config.max_edit_distance
+            meets_similarity_threshold = similarity >= self.config.min_similarity
+            
+            if meets_edit_threshold or meets_similarity_threshold:
+                valid_candidates.append({
+                    'canonical': self.normalized_to_canonical[candidate],
+                    'edit_dist': edit_dist,
+                    'similarity': similarity,
+                    'meets_edit': meets_edit_threshold,
+                    'meets_similarity': meets_similarity_threshold
+                })
         
-        if best_canonical:
-            return best_canonical, best_method, int(best_edit_dist), best_similarity
+        if not valid_candidates:
+            return None, None, None, None
         
-        return None, None, None, None
+        # Select best candidate: prefer edit_distance matches, then by best score
+        # Priority: edit_distance matches with lower distance, then similarity matches with higher similarity
+        valid_candidates.sort(key=lambda x: (
+            not x['meets_edit'],  # Edit distance matches first (False < True)
+            x['edit_dist'] if x['meets_edit'] else float('inf'),  # Lower edit distance better
+            -x['similarity']  # Higher similarity better
+        ))
+        
+        best = valid_candidates[0]
+        best_method = "edit_distance" if best['meets_edit'] else "similarity"
+        
+        return best['canonical'], best_method, int(best['edit_dist']), best['similarity']
     
     @staticmethod
     def levenshtein_distance(s1: str, s2: str) -> int:
@@ -216,6 +225,7 @@ class PlausibilityModel:
         self.ngram_counts = defaultdict(int)
         self.context_counts = defaultdict(int)
         self.total_ngrams = 0
+        self.vocab_size = 0  # Calculate once during training
         
         # Train on lexicon
         self._train(canonical_forms)
@@ -224,9 +234,16 @@ class PlausibilityModel:
         """Train n-gram model on lexicon"""
         n = self.config.ngram_n
         
+        # Collect all unique characters from the training data (including boundary markers)
+        all_chars = set()
+        
         for text in texts:
             # Add boundary markers
             padded = f"^{text.lower()}$"
+            
+            # Track characters (including boundary markers for n-gram counts)
+            for char in padded:
+                all_chars.add(char)
             
             # Extract n-grams
             for i in range(len(padded) - n + 1):
@@ -237,7 +254,15 @@ class PlausibilityModel:
                 self.context_counts[context] += 1
                 self.total_ngrams += 1
         
-        logger.info(f"Trained n-gram model on {len(texts)} drugs, {len(self.ngram_counts)} unique {n}-grams")
+        # Vocabulary size: all unique characters that can appear in n-grams
+        # This includes boundary markers since they're part of the n-grams
+        self.vocab_size = len(all_chars)
+        
+        logger.info(
+            f"Trained n-gram model on {len(texts)} drugs, "
+            f"{len(self.ngram_counts)} unique {n}-grams, "
+            f"vocab_size={self.vocab_size}"
+        )
     
     def compute_plausibility(self, token: str) -> float:
         """
@@ -260,9 +285,9 @@ class PlausibilityModel:
             # Smoothed probability (add-1 smoothing)
             ngram_count = self.ngram_counts.get(ngram, 0)
             context_count = self.context_counts.get(context, 0)
-            vocab_size = len(set(c for ng in self.ngram_counts.keys() for c in ng))
             
-            prob = (ngram_count + 1) / (context_count + vocab_size)
+            # Use pre-calculated vocab_size instead of recalculating
+            prob = (ngram_count + 1) / (context_count + self.vocab_size)
             log_prob_sum += math.log(prob)
             count += 1
         
