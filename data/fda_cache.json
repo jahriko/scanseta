@@ -1,0 +1,43 @@
+[
+  {
+    "query": "test_drug",
+    "found": true,
+    "matches": [
+      {
+        "registration_number": "TEST-1234",
+        "generic_name": "Test Drug",
+        "brand_name": "Test Brand",
+        "dosage_strength": "100 mg",
+        "classification": "Prescription Drug (RX)",
+        "details": {}
+      }
+    ],
+    "best_match": {
+      "registration_number": "TEST-1234",
+      "generic_name": "Test Drug",
+      "brand_name": "Test Brand",
+      "dosage_strength": "100 mg",
+      "classification": "Prescription Drug (RX)",
+      "details": {}
+    },
+    "scraped_at": "2026-01-30T12:00:00"
+  },
+  {
+    "query": "amoxicillin",
+    "found": false,
+    "matches": [],
+    "best_match": null,
+    "error": null,
+    "error_code": null,
+    "scraped_at": "2026-02-07T21:33:37.925920"
+  },
+  {
+    "query": "paracetamol",
+    "found": false,
+    "matches": [],
+    "best_match": null,
+    "error": null,
+    "error_code": null,
+    "scraped_at": "2026-02-07T21:33:45.715524"
+  }
+]

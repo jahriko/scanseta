@@ -1,4 +1,4 @@
-# PNDF Scraper Implementation - Visual Architecture
+# Drug Verification Architecture - FDA Primary + PNDF Secondary
 
 ## System Architecture Diagram
 
@@ -18,7 +18,7 @@
 │  ┌──────────────────────────────────────────────────────────┐  │
 │  │  POST /scan  (ENHANCED)                                  │  │
 │  │  ├─ Receives: Image file (multipart/form-data)          │  │
-│  │  ├─ Returns: PrescriptionResponse + enriched PNDF data  │  │
+│  │  ├─ Returns: PrescriptionResponse + FDA verification + PNDF enrichment │  │
 │  │  └─ Status: ✅ Working                                  │  │
 │  └──────────────────────────────────────────────────────────┘  │
 │                          │                                      │
@@ -59,34 +59,37 @@
 │  │  PrescriptionResponse                                   │  │
 │  │  ├─ success: true                                       │  │
 │  │  ├─ medications: [MedicationInfo, ...]                  │  │
-│  │  ├─ enriched: [{ATC, classifications, interactions}...] │  │
+│  │  ├─ fda_verification: [FDA results...]                 │  │
+│  │  ├─ pndf_enriched: [{ATC, classifications}...]          │  │
+│  │  ├─ enriched: [{ATC, classifications}...] (backward compat) │  │
 │  │  ├─ can_enrich: true                                    │  │
 │  │  ├─ raw_text: "..."                                     │  │
 │  │  └─ processing_time: 2.5s                               │  │
 │  └──────────────────────────────────────────────────────────┘  │
 │                                                                 │
 │  ┌──────────────────────────────────────────────────────────┐  │
-│  │  POST /enrich-medications  (MANUAL)  ← ✅ NEW           │  │
+│  │  POST /enrich-medications  (MANUAL)                     │  │
 │  │  ├─ Request: {"drug_names": ["paracetamol", ...]}      │  │
-│  │  └─ Response: {"enriched_medications": [...]}           │  │
+│  │  └─ Response: {"fda_verification": [...], "pndf_enriched": [...]} │  │
 │  └──────────────────────────────────────────────────────────┘  │
 │                                                                 │
 └─────────────────────────────────────────────────────────────────┘
                           ▲
                           │
-        ┌─────────────────┼─────────────────┐
-        │                 │                 │
-        ▼                 ▼                 ▼
-    ┌────────┐       ┌────────┐       ┌────────┐
-    │PNDF    │       │Cache   │       │Logger  │
-    │Website │       │Storage │       │Console │
-    │(scrape)│       │(JSON)  │       │ output │
-    └────────┘       └────────┘       └────────┘
+        ┌─────────────────┼─────────────────┼─────────────────┐
+        │                 │                 │                 │
+        ▼                 ▼                 ▼                 ▼
+    ┌────────┐       ┌────────┐       ┌────────┐       ┌────────┐
+    │FDA     │       │PNDF    │       │Cache   │       │Logger  │
+    │Portal  │       │Website │       │Storage │       │Console │
+    │(UI     │       │(scrape)│       │(JSON)  │       │ output │
+    │scrape) │       └────────┘       └────────┘       └────────┘
+    └────────┘
 ```
 
 ---
 
-## Data Enrichment Flow
+## Data Verification & Enrichment Flow
 
 ```
 Drug Extraction
@@ -95,14 +98,37 @@ Drug Extraction
     ├─ Ibuprofen
     └─ Amoxicillin
         ↓
-PNDFScraper.enrich_medications()
+    ┌─────────────────────────────────────────┐
+    │  FDA Verification (PRIMARY)             │
+    └─────────────────────────────────────────┘
+    │
+    ├─ Drug 1: Paracetamol
+    │  ├─ Check: data/fda_cache.json?
+    │  ├─ YES (Cache Hit) → Return cached data (fast: <100ms)
+    │  └─ NO → search_drug("paracetamol")
+    │     ├─ Navigate to https://verification.fda.gov.ph/
+    │     ├─ Fill search input, click Search
+    │     ├─ Parse results table + expandable details
+    │     ├─ Extract: registration_number, generic_name, brand_name, dosage_strength, classification
+    │     ├─ Save to cache
+    │     └─ Wait 500ms (rate limiting)
+    │
+    ├─ Drug 2: Ibuprofen
+    │  └─ Same process as Drug 1
+    │
+    └─ Drug 3: Amoxicillin
+       └─ Same process as Drug 1
+        ↓
+    ┌─────────────────────────────────────────┐
+    │  PNDF Enrichment (SECONDARY - ALWAYS)  │
+    └─────────────────────────────────────────┘
     │
     ├─ Drug 1: Paracetamol
     │  ├─ Check: data/pndf_cache.json?
     │  ├─ YES (Cache Hit) → Return cached data (fast: <100ms)
     │  └─ NO → search_drug("paracetamol")
-    │     ├─ HTTP GET https://pnf.doh.gov.ph/?q=paracetamol
-    │     ├─ Parse HTML with BeautifulSoup
+    │     ├─ Playwright UI automation at https://pnf.doh.gov.ph
+    │     ├─ Parse rendered HTML with BeautifulSoup
     │     ├─ Extract: ATC, classifications, dosages, interactions
     │     ├─ Save to cache
     │     └─ Wait 500ms (rate limiting)
@@ -113,70 +139,54 @@ PNDFScraper.enrich_medications()
     └─ Drug 3: Amoxicillin
        └─ Same process as Drug 1
         ↓
-    Return enriched_medications: [
-        {
-            "name": "PARACETAMOL",
-            "atc_code": "N02BE01",
-            "classification": {...},
-            "dosage_forms": [...],
-            ...
-        },
-        ...
-    ]
+    Return response with:
+    ├─ fda_verification: [
+    │     {
+    │         "query": "Paracetamol",
+    │         "found": true,
+    │         "best_match": {
+    │             "registration_number": "DR-1234",
+    │             "generic_name": "Paracetamol",
+    │             "brand_name": "...",
+    │             ...
+    │         }
+    │     },
+    │     ...
+    │  ]
+    └─ pndf_enriched: [
+         {
+             "name": "PARACETAMOL",
+             "atc_code": "N02BE01",
+             "classification": {...},
+             ...
+         },
+         ...
+     ]
 ```
 
 ---
 
 ## Cache Strategy
 
-```
-First Request (Cold Cache)
-┌────────────┐
-│   /scan    │
-└─────┬──────┘
-      │ Drug: "Paracetamol"
-      ▼
-┌──────────────────────────────┐
-│ Check: data/pndf_cache.json  │
-└──────────────────────────────┘
-      │ Not found
-      ▼
-┌──────────────────────────────┐
-│ Live Scrape from PNDF        │  ⏱️ Slow (1-3s)
-│ - Query website              │
-│ - Parse HTML                 │
-│ - Extract data               │
-└──────────────────────────────┘
-      │ Success
-      ▼
-┌──────────────────────────────┐
-│ Save to cache                │
-│ data/pndf_cache.json         │
-└──────────────────────────────┘
-      │
-      ▼
-   Return enriched data
-   
-─────────────────────────────────────
+Both FDA and PNDF use separate cache files for fast lookups:
 
-Subsequent Request (Warm Cache)
-┌────────────┐
-│   /scan    │
-└─────┬──────┘
-      │ Drug: "Paracetamol"
-      ▼
-┌──────────────────────────────┐
-│ Check: data/pndf_cache.json  │
-└──────────────────────────────┘
-      │ Found!
-      ▼
-┌──────────────────────────────┐
-│ Return cached data           │  ⏱️ Fast (<100ms)
-└──────────────────────────────┘
-      │
-      ▼
-   Return enriched data
-```
+**FDA Cache (`data/fda_cache.json`):**
+- Stores FDA verification results keyed by normalized drug name
+- Cache hit: <100ms
+- Cache miss: 2-5s (UI scraping)
+
+**PNDF Cache (`data/pndf_cache.json`):**
+- Stores PNDF enrichment data keyed by normalized drug name
+- Cache hit: <100ms
+- Cache miss: 1-3s (web scraping)
+
+**First Request (Cold Cache):**
+- FDA: Check cache → Miss → UI scrape → Save → Return
+- PNDF: Check cache → Miss → Web scrape → Save → Return
+
+**Subsequent Request (Warm Cache):**
+- FDA: Check cache → Hit → Return (<100ms)
+- PNDF: Check cache → Hit → Return (<100ms)
 
 ---
 
@@ -198,21 +208,32 @@ scanseta-2-backend/
 │   ├─ lxml==5.0.1
 │   └─ apscheduler==3.10.4
 │
-├── src/                             ✅ NEW PACKAGE
+├── src/                             ✅ PACKAGE
 │   ├── __init__.py
-│   └── scrapers/                    ✅ NEW MODULE
+│   └── scrapers/                    ✅ MODULE
 │       ├── __init__.py
-│       └── pndf_scraper.py          ✅ NEW (310 lines)
-│           ├─ PNDFScraper class
+│       ├── pndf_scraper.py          ✅ PNDF Scraper (776 lines)
+│       │   ├─ PNDFScraper class
+│       │   ├─ search_drug()
+│       │   ├─ enrich_medications()
+│       │   ├─ _parse_drug_page()
+│       │   ├─ load_cache()
+│       │   ├─ save_cache()
+│       │   └─ refresh_cache()
+│       └── fda_verification_scraper.py ✅ NEW - FDA Scraper
+│           ├─ FDAVerificationScraper class
 │           ├─ search_drug()
-│           ├─ enrich_medications()
-│           ├─ _parse_drug_page()
+│           ├─ verify_medications()
+│           ├─ _parse_results_table()
+│           ├─ _parse_details_row()
+│           ├─ _select_best_match()
 │           ├─ load_cache()
 │           ├─ save_cache()
-│           └─ refresh_cache()
+│           └─ cleanup()
 │
-├── data/                            ✅ NEW DIRECTORY
-│   └── pndf_cache.json              ✅ AUTO-GENERATED
+├── data/                            ✅ DIRECTORY
+│   ├── pndf_cache.json              ✅ AUTO-GENERATED (PNDF cache)
+│   └── fda_cache.json               ✅ AUTO-GENERATED (FDA cache)
 │
 ├── test_scraper.py                  ✅ NEW (validation)
 ├── QUICK_REFERENCE.md               ✅ NEW (quick start)
@@ -235,6 +256,22 @@ MedicationInfo (Original OCR)
 
 ↓ Auto-enrichment adds:
 
+FDA Verification Result
+├─ query: str
+├─ found: bool
+├─ matches: [FDAMatch, ...]
+├─ best_match: Optional[FDAMatch]
+├─ scraped_at: str (ISO timestamp)
+└─ error: Optional[str]
+
+FDAMatch
+├─ registration_number: str
+├─ generic_name: str
+├─ brand_name: str
+├─ dosage_strength: str
+├─ classification: str
+└─ details: Dict[str, str] (expanded details)
+
 PNDF Drug Data (Enriched)
 ├─ name: str
 ├─ atc_code: Optional[str]
@@ -244,11 +281,7 @@ PNDF Drug Data (Enriched)
 │  ├─ pharmacological: str
 │  └─ chemical_class: str
 │  }
-├─ dosage_forms: [
-│  ├─ route: str (ORAL, RECTAL, IM, IV)
-│  ├─ form: str (e.g., "300 mg tablet")
-│  └─ status: str (OTC, Rx)
-│  ]
+├─ dosage_forms: [...]
 ├─ indications: str
 ├─ contraindications: str
 ├─ precautions: str
@@ -265,7 +298,9 @@ PNDF Drug Data (Enriched)
 PrescriptionResponse (Enhanced)
 ├─ success: bool
 ├─ medications: [MedicationInfo, ...]
-├─ enriched: [PNDF Drug Data, ...]
+├─ fda_verification: [FDA Verification Result, ...]  ← NEW
+├─ pndf_enriched: [PNDF Drug Data, ...]              ← NEW
+├─ enriched: [PNDF Drug Data, ...]                  ← Backward compat
 ├─ can_enrich: bool
 ├─ raw_text: str
 ├─ doctor_name: Optional[str]
@@ -300,7 +335,37 @@ Content-Type: multipart/form-data
       "confidence": 0.9
     }
   ],
-  "enriched": [
+  "fda_verification": [
+    {
+      "query": "Paracetamol",
+      "found": true,
+      "matches": [
+        {
+          "registration_number": "DR-1234",
+          "generic_name": "Paracetamol",
+          "brand_name": "Tylenol",
+          "dosage_strength": "500 mg",
+          "classification": "Prescription Drug (RX)",
+          "details": {
+            "dosage_form": "Tablet",
+            "manufacturer": "...",
+            "country_of_origin": "...",
+            ...
+          }
+        }
+      ],
+      "best_match": {
+        "registration_number": "DR-1234",
+        "generic_name": "Paracetamol",
+        "brand_name": "Tylenol",
+        "dosage_strength": "500 mg",
+        "classification": "Prescription Drug (RX)",
+        "details": {...}
+      },
+      "scraped_at": "2026-01-30T12:34:56.789123"
+    }
+  ],
+  "pndf_enriched": [
     {
       "name": "PARACETAMOL",
       "atc_code": "N02BE01",
@@ -329,6 +394,7 @@ Content-Type: multipart/form-data
       "scraped_at": "2026-01-21T12:34:56.789123"
     }
   ],
+  "enriched": [...],  // Backward compatibility: same as pndf_enriched
   "can_enrich": true,
   "raw_text": "Paracetamol 500mg",
   "processing_time": 2.5
@@ -353,7 +419,21 @@ Content-Type: application/json
 ```json
 {
   "success": true,
-  "enriched_medications": [
+  "fda_verification": [
+    {
+      "query": "paracetamol",
+      "found": true,
+      "best_match": {...},
+      ...
+    },
+    {
+      "query": "ibuprofen",
+      "found": true,
+      "best_match": {...},
+      ...
+    }
+  ],
+  "pndf_enriched": [
     {
       "name": "PARACETAMOL",
       "atc_code": "N02BE01",
@@ -365,6 +445,7 @@ Content-Type: application/json
       ...
     }
   ],
+  "enriched_medications": [...],  // Backward compatibility
   "count": 2
 }
 ```
@@ -384,7 +465,17 @@ Timeline for typical /scan request:
 ├─ parse_prescription_text(): <100ms
 └─ Get drug names: ["Paracetamol", "Ibuprofen"]
 
-3.0-4.5s  Enrich medications (2 drugs)
+3.0-5.0s  FDA Verification (2 drugs) - PRIMARY
+├─ Drug 1 (Paracetamol):
+│  ├─ Cache hit: <50ms
+│  └─ Return cached data
+├─ Drug 2 (Ibuprofen):
+│  ├─ Cache miss: 2-3s (UI scrape)
+│  ├─ Wait 500ms (rate limit)
+│  └─ Save to cache
+└─ Total: ~2.0s
+
+5.0-6.5s  PNDF Enrichment (2 drugs) - SECONDARY (ALWAYS)
 ├─ Drug 1 (Paracetamol):
 │  ├─ Cache hit: <50ms
 │  └─ Return cached data
@@ -395,8 +486,8 @@ Timeline for typical /scan request:
 └─ Total: ~1.5s
 
 ────────────────────────────
-Total: 4.5-5.5s (first request with mixed cache)
-       3.5-4.0s (subsequent requests, warm cache)
+Total: 6.5-7.5s (first request with mixed cache)
+       4.5-5.0s (subsequent requests, warm cache)
 ```
 
 ---
@@ -429,16 +520,17 @@ Steps to deploy:
 
 | Metric | Value | Status |
 |--------|-------|--------|
-| Lines of code (scraper) | 310 | ✅ |
-| New dependencies | 4 | ✅ |
-| New endpoints | 2 | ✅ |
-| Data fields extracted | 14 | ✅ |
-| Cache performance | <100ms hits | ✅ |
+| Lines of code (FDA scraper) | ~400 | ✅ |
+| Lines of code (PNDF scraper) | 776 | ✅ |
+| Dependencies | Playwright, BeautifulSoup4 | ✅ |
+| Endpoints | 3 (scan, scan-batch, enrich-medications) | ✅ |
+| FDA data fields extracted | 5+ base + details | ✅ |
+| PNDF data fields extracted | 14 | ✅ |
+| Cache performance | <100ms hits (both) | ✅ |
 | Error recovery | Automatic fallback | ✅ |
-| Documentation pages | 5 | ✅ |
-| Test coverage | Full | ✅ |
-| Production ready | Yes | ✅ |
+| Frontend integration | Complete | ✅ |
+| Production ready | Conditional (requires scraper/runtime hardening + monitoring) | ⚠️ |
 
 ---
 
-This completes the PNDF web scraper implementation! 🎉
+This completes the FDA primary + PNDF secondary verification implementation! 🎉

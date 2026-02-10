@@ -1,7 +1,7 @@
 from fastapi import FastAPI, File, UploadFile, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
-from typing import Optional, List
+from pydantic import BaseModel, Field
+from typing import Optional, List, Dict, Any
 import torch
 from PIL import Image
 import io
@@ -9,11 +9,25 @@ import logging
 from datetime import datetime
 import os
 import asyncio
-import re
-from transformers import AutoProcessor, AutoModelForVision2Seq
+from pathlib import Path
+try:
+    from transformers import AutoProcessor, AutoModelForVision2Seq
+except ImportError:
+    from transformers import AutoProcessor
+    try:
+        # Transformers 5.x compatibility fallback
+        from transformers import AutoModelForImageTextToText as AutoModelForVision2Seq
+    except ImportError:
+        AutoModelForVision2Seq = None
 from peft import PeftModel
 from src.scrapers.pndf_scraper import PNDFScraper
+from src.scrapers.fda_verification_scraper import FDAVerificationScraper
 from src.post_processing import DrugPostProcessor, PostProcessingConfig
+from src.post_processing.token_processing import (
+    clean_extracted_tokens,
+    extract_enrichment_candidates,
+    normalize_manual_drug_names,
+)
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -41,11 +55,60 @@ class MedicationInfo(BaseModel):
     frequency: Optional[str] = None
     confidence: float
     original_name: Optional[str] = None
-    flags: List[str] = []
+    flags: List[str] = Field(default_factory=list)
     match_method: Optional[str] = None
     edit_distance: Optional[int] = None
     similarity: Optional[float] = None
     plausibility: Optional[float] = None
+
+
+class FDAMatch(BaseModel):
+    registration_number: Optional[str] = None
+    generic_name: Optional[str] = None
+    brand_name: Optional[str] = None
+    dosage_strength: Optional[str] = None
+    classification: Optional[str] = None
+    details: Dict[str, str] = Field(default_factory=dict)
+
+
+class FDAVerificationItem(BaseModel):
+    query: str
+    found: bool
+    matches: List[FDAMatch] = Field(default_factory=list)
+    best_match: Optional[FDAMatch] = None
+    error: Optional[str] = None
+    error_code: Optional[str] = None
+    scraped_at: Optional[str] = None
+
+
+class PNDFEnrichmentItem(BaseModel):
+    name: str
+    found: bool = True
+    atc_code: Optional[str] = None
+    classification: Optional[Dict[str, Optional[str]]] = None
+    dosage_forms: List[Dict[str, Any]] = Field(default_factory=list)
+    indications: Optional[str] = None
+    contraindications: Optional[str] = None
+    precautions: Optional[str] = None
+    adverse_reactions: Optional[str] = None
+    drug_interactions: Optional[str] = None
+    mechanism_of_action: Optional[str] = None
+    dosage_instructions: Optional[str] = None
+    administration: Optional[str] = None
+    pregnancy_category: Optional[str] = None
+    message: Optional[str] = None
+    error: Optional[str] = None
+    error_code: Optional[str] = None
+    scraped_at: Optional[str] = None
+
+
+class EnrichmentResponse(BaseModel):
+    success: bool
+    fda_verification: List[FDAVerificationItem] = Field(default_factory=list)
+    pndf_enriched: List[PNDFEnrichmentItem] = Field(default_factory=list)
+    enriched_medications: List[PNDFEnrichmentItem] = Field(default_factory=list)
+    count: int
+
 
 class PrescriptionResponse(BaseModel):
     success: bool
@@ -55,15 +118,34 @@ class PrescriptionResponse(BaseModel):
     patient_name: Optional[str] = None
     date: Optional[str] = None
     processing_time: float
-    enriched: Optional[List[dict]] = None
+    enriched: Optional[List[PNDFEnrichmentItem]] = None  # Backward compatibility: alias for pndf_enriched
+    fda_verification: Optional[List[FDAVerificationItem]] = None
+    pndf_enriched: Optional[List[PNDFEnrichmentItem]] = None
     can_enrich: bool = False
 
 
 class EnrichmentRequest(BaseModel):
     drug_names: List[str]
 
+
+def _to_pndf_item(item: Dict[str, Any]) -> PNDFEnrichmentItem:
+    payload = dict(item)
+    payload.setdefault("found", True)
+    return PNDFEnrichmentItem(**payload)
+
+
+def _to_fda_item(item: Dict[str, Any]) -> FDAVerificationItem:
+    return FDAVerificationItem(**item)
+
+
 # Helper function to load Qwen VL with LoRA adapter
 def load_qwen_vl_with_lora(base_model_id: str, adapter_repo: Optional[str]):
+    if AutoModelForVision2Seq is None:
+        raise RuntimeError(
+            "No compatible vision-to-sequence auto model class found in transformers. "
+            "Install a compatible transformers version or update model loader mappings."
+        )
+
     processor = AutoProcessor.from_pretrained(base_model_id, trust_remote_code=True)
 
     dtype = torch.float16 if torch.cuda.is_available() else torch.float32
@@ -249,8 +331,9 @@ model_config = ModelConfig()
 
 # Initialize post-processor
 try:
+    default_lexicon_path = Path(__file__).resolve().parent / "data" / "drug_lexicon.txt"
     post_processor_config = PostProcessingConfig(
-        lexicon_path=os.getenv("LEXICON_PATH", "./data/drug_lexicon.txt"),
+        lexicon_path=os.getenv("LEXICON_PATH", str(default_lexicon_path)),
         max_edit_distance=int(os.getenv("MAX_EDIT_DISTANCE", "2")),
         min_similarity=float(os.getenv("MIN_SIMILARITY", "0.86")),
         ngram_n=int(os.getenv("NGRAM_N", "3")),
@@ -296,6 +379,7 @@ async def shutdown_event():
     """Clean up resources on server shutdown"""
     try:
         await PNDFScraper.cleanup()
+        await FDAVerificationScraper.cleanup()
         logger.info("✓ Server shutdown cleanup complete")
     except Exception as e:
         logger.warning(f"Error during shutdown cleanup: {e}")
@@ -348,21 +432,32 @@ async def load_model(
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
-@app.post("/enrich-medications")
+@app.post("/enrich-medications", response_model=EnrichmentResponse)
 async def enrich_medications(request: EnrichmentRequest):
     """
-    Enrich extracted medication names with PNDF data
-    Returns official drug information, classifications, interactions, etc.
+    Enrich extracted medication names with FDA verification and PNDF data
+    Returns FDA verification results (primary) and PNDF enrichment (secondary)
     """
     try:
-        logger.info(f"Enriching {len(request.drug_names)} medications with PNDF data")
-        enriched = await PNDFScraper.enrich_medications(request.drug_names)
-        
-        return {
-            "success": True,
-            "enriched_medications": enriched,
-            "count": len(enriched),
-        }
+        normalized_drug_names = normalize_manual_drug_names(request.drug_names)
+        logger.info(
+            f"Enriching {len(normalized_drug_names)} normalized medications "
+            f"(received {len(request.drug_names)}) with FDA and PNDF data"
+        )
+
+        fda_verification_raw = await FDAVerificationScraper.verify_medications(normalized_drug_names)
+        pndf_enriched_raw = await PNDFScraper.enrich_medications(normalized_drug_names)
+
+        fda_verification = [_to_fda_item(item) for item in fda_verification_raw]
+        pndf_enriched = [_to_pndf_item(item) for item in pndf_enriched_raw]
+
+        return EnrichmentResponse(
+            success=True,
+            fda_verification=fda_verification,
+            pndf_enriched=pndf_enriched,
+            enriched_medications=pndf_enriched,
+            count=len(normalized_drug_names),
+        )
     except Exception as e:
         logger.error(f"Error enriching medications: {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -377,47 +472,51 @@ async def scan_prescription(file: UploadFile = File(...)):
             status_code=503,
             detail="Model not loaded. Please load model first via /load-model endpoint"
         )
-    
-    # Validate file type
+
     if not file.content_type.startswith("image/"):
         raise HTTPException(status_code=400, detail="File must be an image")
-    
+
     try:
-        # Read and process image
         image_data = await file.read()
         image = Image.open(io.BytesIO(image_data)).convert("RGB")
-        
-        # Run model prediction
+
         result = model_config.predict(image)
-        
-        # Parse the result (customize based on your model's output format)
         medications = parse_prescription_text(result["raw_text"])
-        
-        # Extract drug names for enrichment (skip OOV tokens)
-        drug_names = [med.name for med in medications if med.name and "OOV" not in med.flags]
-        enriched_data = None
-        
-        # Automatically enrich with PNDF data if medications were extracted
+
+        drug_names = extract_enrichment_candidates(medications)
+        fda_verification_data: Optional[List[FDAVerificationItem]] = None
+        pndf_enriched_data: Optional[List[PNDFEnrichmentItem]] = None
+
         if drug_names:
             try:
-                enriched_data = await PNDFScraper.enrich_medications(drug_names)
-                logger.info(f"✓ Enriched {len(enriched_data)} medications")
+                fda_verification_raw = await FDAVerificationScraper.verify_medications(drug_names)
+                fda_verification_data = [_to_fda_item(item) for item in fda_verification_raw]
+                logger.info(f"Verified {len(fda_verification_data)} medications with FDA")
             except Exception as e:
-                logger.warning(f"Could not enrich medications: {e}")
-                enriched_data = None
-        
+                logger.warning(f"Could not verify medications with FDA: {e}")
+
+            try:
+                pndf_enriched_raw = await PNDFScraper.enrich_medications(drug_names)
+                pndf_enriched_data = [_to_pndf_item(item) for item in pndf_enriched_raw]
+                logger.info(f"Enriched {len(pndf_enriched_data)} medications with PNDF")
+            except Exception as e:
+                logger.warning(f"Could not enrich medications with PNDF: {e}")
+
         return PrescriptionResponse(
             success=True,
             medications=medications,
             raw_text=result["raw_text"],
             processing_time=result["processing_time"],
-            enriched=enriched_data,
-            can_enrich=len(drug_names) > 0 if drug_names else False
+            fda_verification=fda_verification_data,
+            pndf_enriched=pndf_enriched_data,
+            enriched=pndf_enriched_data,
+            can_enrich=bool(drug_names),
         )
-        
+
     except Exception as e:
         logger.error(f"Error processing prescription: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
 
 @app.post("/scan-batch")
 async def scan_batch(files: List[UploadFile] = File(...)):
@@ -426,7 +525,7 @@ async def scan_batch(files: List[UploadFile] = File(...)):
     """
     if model_config.model is None:
         raise HTTPException(status_code=503, detail="Model not loaded")
-    
+
     results = []
     for file in files:
         try:
@@ -434,76 +533,54 @@ async def scan_batch(files: List[UploadFile] = File(...)):
             image = Image.open(io.BytesIO(image_data)).convert("RGB")
             result = model_config.predict(image)
             medications = parse_prescription_text(result["raw_text"])
-            
-            # Extract drug names for enrichment
-            drug_names = [med.name for med in medications if med.name and "OOV" not in med.flags]
-            enriched_data = None
-            
-            # Automatically enrich with PNDF data if medications were extracted
+
+            drug_names = extract_enrichment_candidates(medications)
+            fda_verification_data = None
+            pndf_enriched_data = None
+
             if drug_names:
                 try:
-                    enriched_data = await PNDFScraper.enrich_medications(drug_names)
-                    logger.info(f"✓ Enriched {len(enriched_data)} medications for {file.filename}")
+                    fda_verification_raw = await FDAVerificationScraper.verify_medications(drug_names)
+                    fda_verification_data = [_to_fda_item(item) for item in fda_verification_raw]
+                    logger.info(f"Verified {len(fda_verification_data)} medications with FDA for {file.filename}")
                 except Exception as e:
-                    logger.warning(f"Could not enrich medications for {file.filename}: {e}")
-            
+                    logger.warning(f"Could not verify medications with FDA for {file.filename}: {e}")
+
+                try:
+                    pndf_enriched_raw = await PNDFScraper.enrich_medications(drug_names)
+                    pndf_enriched_data = [_to_pndf_item(item) for item in pndf_enriched_raw]
+                    logger.info(f"Enriched {len(pndf_enriched_data)} medications with PNDF for {file.filename}")
+                except Exception as e:
+                    logger.warning(f"Could not enrich medications with PNDF for {file.filename}: {e}")
+
             results.append({
                 "filename": file.filename,
                 "success": True,
                 "medications": medications,
                 "raw_text": result["raw_text"],
                 "processing_time": result["processing_time"],
-                "enriched": enriched_data,
-                "can_enrich": len(drug_names) > 0 if drug_names else False
+                "fda_verification": fda_verification_data,
+                "pndf_enriched": pndf_enriched_data,
+                "enriched": pndf_enriched_data,
+                "can_enrich": bool(drug_names),
             })
         except Exception as e:
             results.append({
                 "filename": file.filename,
                 "success": False,
-                "error": str(e)
+                "error": str(e),
             })
-    
+
     return {"results": results, "total": len(files)}
+
 
 def parse_prescription_text(text: str) -> List[MedicationInfo]:
     """
-    Parse the model output into structured medication information
-    Uses post-processing for fuzzy matching and canonicalization
+    Parse model output into structured medication information.
+    Uses post-processing for fuzzy matching and canonicalization.
     """
-    # Split by common delimiters (comma, semicolon, newline)
-    raw_tokens = re.split(r'[,;\n]', text)
-    
-    # Clean each token
-    cleaned_tokens = []
-    for token in raw_tokens:
-        token = token.strip()
-        if not token:
-            continue
-        
-        # Remove dosage units and numbers (mg, ml, tabs, etc.)
-        token = re.sub(r'\d+\s*(mg|ml|mcg|g|tabs?|capsules?|units?|iu)\b', '', token, flags=re.IGNORECASE)
-        
-        # Remove frequency indicators
-        token = re.sub(r'\b(bid|tid|qid|daily|once|twice|thrice|od|bd|qd)\b', '', token, flags=re.IGNORECASE)
-        
-        # Remove standalone numbers
-        token = re.sub(r'\b\d+\b', '', token)
-        
-        # Clean up extra whitespace
-        token = re.sub(r'\s+', ' ', token).strip()
-        
-        if token and len(token) > 1:  # Skip single characters
-            cleaned_tokens.append(token)
-    
-    # Remove duplicates while preserving order
-    seen = set()
-    unique_tokens = []
-    for token in cleaned_tokens:
-        token_lower = token.lower()
-        if token_lower not in seen:
-            seen.add(token_lower)
-            unique_tokens.append(token)
-    
+    unique_tokens = clean_extracted_tokens(text)
+
     if not unique_tokens:
         return [
             MedicationInfo(
@@ -511,57 +588,57 @@ def parse_prescription_text(text: str) -> List[MedicationInfo]:
                 dosage=None,
                 frequency=None,
                 confidence=0.0,
-                flags=["PARSE_ERROR"]
+                flags=["PARSE_ERROR"],
             )
         ]
-    
-    # Post-process tokens if processor is available
-    medications = []
-    
+
+    medications: List[MedicationInfo] = []
     if post_processor:
         try:
             results = post_processor.process_tokens(unique_tokens)
-            
             for result in results:
-                # Use canonical name if matched, otherwise original
                 final_name = result.canonical_name if result.canonical_name else result.original_name
-                
-                medications.append(MedicationInfo(
-                    name=final_name,
-                    dosage=None,
-                    frequency=None,
-                    confidence=0.9,
-                    original_name=result.original_name,
-                    flags=result.flags,
-                    match_method=result.match_method,
-                    edit_distance=result.edit_distance,
-                    similarity=result.similarity,
-                    plausibility=result.plausibility
-                ))
+                medications.append(
+                    MedicationInfo(
+                        name=final_name,
+                        dosage=None,
+                        frequency=None,
+                        confidence=0.9,
+                        original_name=result.original_name,
+                        flags=result.flags,
+                        match_method=result.match_method,
+                        edit_distance=result.edit_distance,
+                        similarity=result.similarity,
+                        plausibility=result.plausibility,
+                    )
+                )
         except Exception as e:
             logger.error(f"Post-processing error: {e}")
-            # Fallback: return tokens without post-processing
             for token in unique_tokens:
-                medications.append(MedicationInfo(
+                medications.append(
+                    MedicationInfo(
+                        name=token,
+                        dosage=None,
+                        frequency=None,
+                        confidence=0.9,
+                        flags=["POST_PROCESS_ERROR"],
+                    )
+                )
+    else:
+        for token in unique_tokens:
+            medications.append(
+                MedicationInfo(
                     name=token,
                     dosage=None,
                     frequency=None,
                     confidence=0.9,
-                    flags=["POST_PROCESS_ERROR"]
-                ))
-    else:
-        # No post-processor available
-        for token in unique_tokens:
-            medications.append(MedicationInfo(
-                name=token,
-                dosage=None,
-                frequency=None,
-                confidence=0.9,
-                flags=["NO_POST_PROCESSOR"]
-            ))
-    
+                    flags=["NO_POST_PROCESSOR"],
+                )
+            )
+
     return medications
 
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8000)
+

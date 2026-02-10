@@ -6,7 +6,6 @@ Tests candidate matching, plausibility screening, and flagging
 import unittest
 import tempfile
 import os
-from pathlib import Path
 from src.post_processing import DrugPostProcessor, PostProcessingConfig
 
 
@@ -219,6 +218,14 @@ class TestDrugPostProcessing(unittest.TestCase):
         
         # With max_edit_distance=1, this might not match or match via similarity
         # The exact behavior depends on similarity threshold
+
+    def test_missing_lexicon_has_deterministic_flag(self):
+        """Processor should not crash when lexicon is missing."""
+        missing_config = PostProcessingConfig(lexicon_path="does_not_exist.txt")
+        processor = DrugPostProcessor(missing_config)
+        result = processor.process_token("paracetamol")
+        self.assertIn("LEXICON_UNAVAILABLE", result.flags)
+        self.assertIn("OOV", result.flags)
 
 
 class TestParsingIntegration(unittest.TestCase):

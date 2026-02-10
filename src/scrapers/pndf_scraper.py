@@ -4,7 +4,6 @@ Fetches and parses medication information from https://pnf.doh.gov.ph/
 Uses Playwright to handle JavaScript-rendered content (Next.js with Radix dialogs)
 """
 
-import json
 import logging
 import asyncio
 import os
@@ -13,6 +12,7 @@ from typing import List, Dict, Optional
 from datetime import datetime
 from bs4 import BeautifulSoup
 import re
+from .cache_utils import load_cache, normalize_key, save_cache, upsert_cache_entry
 
 logger = logging.getLogger(__name__)
 
@@ -23,13 +23,15 @@ except ImportError:
     PLAYWRIGHT_AVAILABLE = False
     logger.warning("Playwright not installed. Install with: pip install playwright && playwright install chromium")
 
-CACHE_DIR = Path("./data")
+PROJECT_ROOT = Path(__file__).resolve().parents[2]
+CACHE_DIR = PROJECT_ROOT / "data"
 CACHE_PATH = CACHE_DIR / "pndf_cache.json"
 PNDF_BASE_URL = "https://pnf.doh.gov.ph"
 
 # Cloudflare bypass: Set to False to avoid detection (browser window will be visible)
 # Set PNDF_HEADLESS=false environment variable to run in visible mode
-PNDF_HEADLESS = os.getenv("PNDF_HEADLESS", "true").lower() == "false"
+PNDF_HEADLESS = os.getenv("PNDF_HEADLESS", "true").lower() != "false"
+PNDF_SAVE_DEBUG_HTML = os.getenv("PNDF_SAVE_DEBUG_HTML", "false").lower() == "true"
 
 
 class PNDFScraper:
@@ -37,10 +39,20 @@ class PNDFScraper:
 
     # Request delay (seconds) between searches to respect server
     REQUEST_DELAY = 0.5
+    CACHE_TTL_SECONDS = int(os.getenv("PNDF_CACHE_TTL_SECONDS", "0"))
     
     # Shared browser instance (initialized lazily)
     _browser: Optional[Browser] = None
     _playwright_context = None
+
+    @staticmethod
+    def _cache_key(entry: Dict) -> Optional[str]:
+        return entry.get("name")
+
+    @staticmethod
+    def _safe_filename(value: str) -> str:
+        safe = re.sub(r"[^a-zA-Z0-9._-]+", "_", value.strip())
+        return safe.strip("._") or "query"
 
     @staticmethod
     async def _get_browser() -> Browser:
@@ -56,7 +68,7 @@ class PNDFScraper:
             # Note: Cloudflare detects headless browsers easily, so headless=False is recommended
             # Set PNDF_HEADLESS=false environment variable to run in visible mode
             PNDFScraper._browser = await playwright.chromium.launch(
-                headless=not PNDF_HEADLESS,  # Use False to bypass Cloudflare (browser window visible)
+                headless=PNDF_HEADLESS,
                 args=[
                     '--no-sandbox',
                     '--disable-setuid-sandbox',
@@ -470,15 +482,16 @@ class PNDFScraper:
             # Get page HTML after JavaScript execution and expansion
             html_content = await page.content()
             
-            # Debug: Save HTML to file for inspection (optional, can be removed later)
-            debug_html_path = CACHE_DIR / f"debug_{drug_name}_page.html"
-            try:
-                CACHE_DIR.mkdir(exist_ok=True)
-                with open(debug_html_path, "w", encoding="utf-8") as f:
-                    f.write(html_content)
-                logger.debug(f"Saved page HTML to {debug_html_path} for debugging")
-            except Exception as e:
-                logger.debug(f"Could not save debug HTML: {e}")
+            # Debug HTML snapshots are disabled by default.
+            if PNDF_SAVE_DEBUG_HTML:
+                debug_html_path = CACHE_DIR / f"debug_{PNDFScraper._safe_filename(drug_name)}_page.html"
+                try:
+                    CACHE_DIR.mkdir(parents=True, exist_ok=True)
+                    with open(debug_html_path, "w", encoding="utf-8") as f:
+                        f.write(html_content)
+                    logger.debug(f"Saved page HTML to {debug_html_path} for debugging")
+                except Exception as e:
+                    logger.debug(f"Could not save debug HTML: {e}")
             
             # Parse HTML with BeautifulSoup
             soup = BeautifulSoup(html_content, "lxml")
@@ -535,6 +548,7 @@ class PNDFScraper:
         try:
             drug_info = {
                 "name": drug_name.upper(),
+                "found": True,
                 "atc_code": None,
                 "classification": {
                     "anatomical": None,
@@ -655,26 +669,15 @@ class PNDFScraper:
     @staticmethod
     async def load_cache() -> List[Dict]:
         """Load cached PNDF data from disk"""
-        if CACHE_PATH.exists():
-            try:
-                with open(CACHE_PATH, "r") as f:
-                    cache = json.load(f)
-                    logger.info(f"✓ Loaded PNDF cache with {len(cache)} drugs")
-                    return cache
-            except Exception as e:
-                logger.error(f"Error loading cache: {e}")
-        return []
+        cache = await load_cache(CACHE_PATH, ttl_seconds=PNDFScraper.CACHE_TTL_SECONDS)
+        logger.info(f"Loaded PNDF cache with {len(cache)} drugs")
+        return cache
 
     @staticmethod
     async def save_cache(data: List[Dict]) -> None:
         """Persist PNDF data to disk"""
-        try:
-            CACHE_DIR.mkdir(exist_ok=True)
-            with open(CACHE_PATH, "w") as f:
-                json.dump(data, f, indent=2)
-            logger.info(f"✓ Saved PNDF cache with {len(data)} drugs")
-        except Exception as e:
-            logger.error(f"Error saving cache: {e}")
+        saved = await save_cache(CACHE_PATH, data, key_fn=PNDFScraper._cache_key)
+        logger.info(f"Saved PNDF cache with {len(saved)} drugs")
 
     @staticmethod
     async def enrich_medications(
@@ -688,41 +691,53 @@ class PNDFScraper:
             cache = await PNDFScraper.load_cache()
 
         enriched = []
-        cache_dict = {drug["name"].lower(): drug for drug in cache}
+        cache_dict = {
+            normalize_key(drug.get("name", "")): drug
+            for drug in cache
+            if normalize_key(drug.get("name", ""))
+        }
 
         for drug_name in drug_names:
-            drug_name_lower = drug_name.lower()
+            drug_name_key = normalize_key(drug_name)
 
-            # Try to find in cache
-            cached_drug = cache_dict.get(drug_name_lower)
+            cached_drug = cache_dict.get(drug_name_key)
             if cached_drug:
                 enriched.append(cached_drug)
-                logger.info(f"✓ Found {drug_name} in cache")
+                logger.info(f"Found {drug_name} in cache")
             else:
-                # Try to search live
                 logger.info(f"Searching for {drug_name} (not in cache)...")
                 try:
                     drug_info = await PNDFScraper.search_drug(drug_name)
                     if drug_info:
                         enriched.append(drug_info)
-                        # Add to cache for future use
-                        cache.append(drug_info)
-                        await PNDFScraper.save_cache(cache)
+                        cache = await upsert_cache_entry(
+                            CACHE_PATH,
+                            drug_info,
+                            key_fn=PNDFScraper._cache_key,
+                        )
+                        cache_dict[drug_name_key] = drug_info
                     else:
-                        # Return minimal info if not found
+                        error_code = "playwright_unavailable" if not PLAYWRIGHT_AVAILABLE else "not_found"
+                        message = (
+                            "Scraper runtime unavailable"
+                            if error_code == "playwright_unavailable"
+                            else "Not found in PNDF database"
+                        )
                         enriched.append({
                             "name": drug_name,
                             "found": False,
-                            "message": "Not found in PNDF database",
+                            "message": message,
+                            "error_code": error_code,
                         })
                 except Exception as e:
                     logger.error(f"Error enriching {drug_name}: {e}")
                     enriched.append({
                         "name": drug_name,
+                        "found": False,
                         "error": str(e),
+                        "error_code": "scrape_error",
                     })
 
-                # Respect server load
                 await asyncio.sleep(PNDFScraper.REQUEST_DELAY)
 
         return enriched
@@ -750,15 +765,24 @@ class PNDFScraper:
         logger.info(f"Starting PNDF cache refresh for {len(drugs)} drugs...")
 
         cache = await PNDFScraper.load_cache()
-        cache_dict = {drug["name"].lower(): drug for drug in cache}
+        cache_dict = {
+            normalize_key(drug.get("name", "")): drug
+            for drug in cache
+            if normalize_key(drug.get("name", ""))
+        }
 
         for drug_name in drugs:
-            if drug_name.lower() not in cache_dict:
+            drug_name_key = normalize_key(drug_name)
+            if drug_name_key not in cache_dict:
                 try:
                     drug_info = await PNDFScraper.search_drug(drug_name)
                     if drug_info:
-                        cache.append(drug_info)
-                        cache_dict[drug_name.lower()] = drug_info
+                        cache = await upsert_cache_entry(
+                            CACHE_PATH,
+                            drug_info,
+                            key_fn=PNDFScraper._cache_key,
+                        )
+                        cache_dict[drug_name_key] = drug_info
                 except Exception as e:
                     logger.error(f"Error fetching {drug_name}: {e}")
 
@@ -766,10 +790,14 @@ class PNDFScraper:
                 await asyncio.sleep(PNDFScraper.REQUEST_DELAY)
 
         await PNDFScraper.save_cache(list(cache_dict.values()))
-        logger.info(f"✓ Cache refresh complete. Total drugs: {len(cache_dict)}")
+        logger.info(f"Cache refresh complete. Total drugs: {len(cache_dict)}")
 
     @staticmethod
     async def cleanup():
         """Clean up browser resources (call on server shutdown)"""
         await PNDFScraper._close_browser()
-        logger.info("✓ PNDF scraper cleanup complete")
+        logger.info("PNDF scraper cleanup complete")
+
+
+
+

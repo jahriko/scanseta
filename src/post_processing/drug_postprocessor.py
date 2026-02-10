@@ -17,12 +17,14 @@ from collections import defaultdict
 from difflib import SequenceMatcher
 
 logger = logging.getLogger(__name__)
+DEFAULT_DATA_DIR = Path(__file__).resolve().parents[2] / "data"
+DEFAULT_LEXICON_PATH = DEFAULT_DATA_DIR / "drug_lexicon.txt"
 
 
 @dataclass
 class PostProcessingConfig:
     """Configuration for post-processing"""
-    lexicon_path: str = "./data/drug_lexicon.txt"
+    lexicon_path: str = str(DEFAULT_LEXICON_PATH)
     max_edit_distance: int = 2
     min_similarity: float = 0.86
     ngram_n: int = 3
@@ -295,6 +297,14 @@ class PlausibilityModel:
         return log_prob_sum / count if count > 0 else -2.0
 
 
+class NullPlausibilityModel:
+    """Fallback plausibility model used when lexicon data is unavailable."""
+
+    @staticmethod
+    def compute_plausibility(token: str) -> float:
+        return 0.0
+
+
 class Flagger:
     """Assign flags based on matching and plausibility results"""
     
@@ -327,7 +337,8 @@ class DrugPostProcessor:
         # Load lexicon
         canonical_forms, normalized_to_canonical = LexiconLoader.load(self.config.lexicon_path)
         
-        if not canonical_forms:
+        self.lexicon_available = bool(canonical_forms)
+        if not self.lexicon_available:
             logger.warning("Empty lexicon - post-processing will mark all tokens as OOV")
         
         # Initialize components
@@ -336,7 +347,10 @@ class DrugPostProcessor:
             normalized_to_canonical,
             self.config
         )
-        self.plausibility_model = PlausibilityModel(canonical_forms, self.config)
+        if self.lexicon_available:
+            self.plausibility_model = PlausibilityModel(canonical_forms, self.config)
+        else:
+            self.plausibility_model = NullPlausibilityModel()
     
     def process_token(self, token: str) -> MatchResult:
         """Process a single token through the pipeline"""
@@ -348,7 +362,9 @@ class DrugPostProcessor:
         
         # Assign flags
         flags = Flagger.assign_flags(canonical, plausibility, self.config.plausibility_threshold)
-        
+        if not self.lexicon_available:
+            flags.append("LEXICON_UNAVAILABLE")
+
         return MatchResult(
             canonical_name=canonical,
             original_name=token,

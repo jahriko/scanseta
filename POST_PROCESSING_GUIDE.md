@@ -11,12 +11,12 @@ This implementation adds three key post-processing techniques to the prescriptio
 ## Architecture
 
 ```
-VLM Output → Token Parsing → Post-Processing → PNDF Enrichment → API Response
-                                    ↓
-                        ┌───────────────────────┐
-                        │  DrugPostProcessor    │
-                        ├───────────────────────┤
-                        │ • CandidateGenerator  │
+VLM Output → Token Parsing → Post-Processing → FDA Verification → PNDF Enrichment → API Response
+                                    ↓                    ↓                ↓
+                        ┌───────────────────────┐  ┌──────────┐  ┌──────────┐
+                        │  DrugPostProcessor    │  │   FDA    │  │   PNDF   │
+                        ├───────────────────────┤  │ Scraper  │  │ Scraper  │
+                        │ • CandidateGenerator  │  └──────────┘  └──────────┘
                         │   - N-gram indexing   │
                         │   - Levenshtein dist  │
                         │   - Similarity score  │
@@ -33,7 +33,7 @@ VLM Output → Token Parsing → Post-Processing → PNDF Enrichment → API Res
 1. **data/drug_lexicon.txt** - Static lexicon with 110+ common Philippine drugs
 2. **src/post_processing/__init__.py** - Module exports
 3. **src/post_processing/drug_postprocessor.py** - Main implementation (400+ lines)
-4. **test_post_processing.py** - Comprehensive unit tests (17 tests, all passing)
+4. **test_post_processing.py** - Core post-processing unit tests (run in CI/local)
 
 ## API Changes
 
@@ -78,7 +78,9 @@ class MedicationInfo(BaseModel):
       "confidence": 0.9
     }
   ],
-  "enriched": [...],
+  "fda_verification": [...],
+  "pndf_enriched": [...],
+  "enriched": [...],  // Backward compatibility: same as pndf_enriched
   "can_enrich": true
 }
 ```
@@ -129,7 +131,8 @@ For each token:
 
 ### 5. Enrichment
 
-Only tokens WITHOUT the `OOV` flag are sent to PNDF enrichment, improving cache hit rates.
+Only tokens that pass enrichment gating are sent to FDA/PNDF enrichment.  
+Blocked flags: `OOV`, `PARSE_ERROR`, `POST_PROCESS_ERROR`, `NO_POST_PROCESSOR`.
 
 ## Examples
 
@@ -201,10 +204,13 @@ Logs include:
    - Imports and initializes `DrugPostProcessor`
    - Enhanced `parse_prescription_text()` function
    - Updated both `/scan` and `/scan-batch` endpoints
+   - Integrates FDA verification (primary) and PNDF enrichment (always)
 
 2. **MedicationInfo**: Extended with 6 new optional fields (backward-compatible)
 
-3. **PNDF Enrichment**: Filtered to skip OOV tokens
+3. **FDA Verification**: Filtered to skip OOV tokens, verifies against official FDA portal
+
+4. **PNDF Enrichment**: Filtered to skip OOV tokens, always runs as secondary enrichment source
 
 ## Future Enhancements
 
