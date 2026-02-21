@@ -1,0 +1,11 @@
+# Python env/cache
+backend/.venv/
+backend/**/__pycache__/
+*.py[cod]
+
+# Local model/cache data
+backend/hf_home/
+
+# Runtime scraper artifacts
+backend/data/debug_*_page.html
+backend/data/pndf_cache.json
