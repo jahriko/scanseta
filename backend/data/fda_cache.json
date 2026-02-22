@@ -39,5 +39,14 @@
     "error": null,
     "error_code": null,
     "scraped_at": "2026-02-07T21:33:45.715524"
+  },
+  {
+    "query": "CETIRIZINE",
+    "found": false,
+    "matches": [],
+    "best_match": null,
+    "error": null,
+    "error_code": null,
+    "scraped_at": "2026-02-22T00:28:46.678577"
   }
 ]

@@ -93,70 +93,105 @@ class PNDFScraper:
     @staticmethod
     async def _handle_radix_dialog(page: Page) -> None:
         """
-        Handle Disclaimer Modal (Radix dialog) that appears on page refresh
-        The modal blocks the page, so it must be closed before interacting with elements
+        Handle Disclaimer Modal (Radix dialog) that appears on page refresh.
+        The modal blocks the page, so it must be closed before interacting with elements.
         """
         try:
-            # Wait a bit for dialog to appear
             await page.wait_for_timeout(1000)
-            
-            # First, check if the disclaimer modal exists by looking for the radix dialog
-            # The modal has id="radix-_r_9_" or similar with data-state="open"
-            try:
-                # Check for open Radix dialog
-                open_dialog = page.locator('[id^="radix-"][data-state="open"]').first
-                if await open_dialog.is_visible(timeout=2000):
-                    logger.info("Found open Radix dialog (Disclaimer Modal)")
-                    
-                    # Try the most robust method: getByRole with exact 'Close' button
+
+            def open_dialog_locator():
+                return page.locator('[role="dialog"]:visible, [id^="radix-"][data-state="open"]')
+
+            if await open_dialog_locator().count() == 0:
+                logger.debug("No open disclaimer dialog detected")
+                return
+
+            logger.info("Open disclaimer dialog detected; closing it before search")
+
+            close_selectors = [
+                '[role="dialog"] button[aria-label="Close"]',
+                '[role="dialog"] [data-radix-dialog-close]',
+                '[role="dialog"] button:has-text("Close")',
+                'button[aria-label="Close"]',
+                'button[data-radix-dialog-close]',
+                'button:has-text("Close")',
+            ]
+
+            for selector in close_selectors:
+                close_buttons = page.locator(selector)
+                count = await close_buttons.count()
+                if count == 0:
+                    continue
+
+                for idx in range(count):
+                    close_button = close_buttons.nth(idx)
                     try:
-                        close_button = page.get_by_role('button', name='Close')
-                        if await close_button.is_visible(timeout=2000):
-                            logger.info("Found Close button using getByRole")
-                            await close_button.click()
-                            await page.wait_for_timeout(500)
-                            # Verify dialog closed
-                            try:
-                                if not await open_dialog.is_visible(timeout=1000):
-                                    logger.info("✓ Disclaimer Modal closed successfully")
-                                    return
-                            except:
-                                logger.info("✓ Disclaimer Modal appears to be closed")
-                                return
-                    except PlaywrightTimeoutError:
-                        logger.debug("Close button not found with getByRole, trying other methods...")
-                    
-                    # Fallback selectors if getByRole doesn't work
-                    fallback_selectors = [
-                        'button[aria-label="Close"]',
-                        'button[data-radix-dialog-close]',
-                        '[role="dialog"] button:has-text("Close")',
-                    ]
-                    
-                    for selector in fallback_selectors:
-                        try:
-                            close_button = page.locator(selector).first
-                            if await close_button.is_visible(timeout=1000):
-                                logger.info(f"Found dialog close button: {selector}")
-                                await close_button.click()
-                                await page.wait_for_timeout(500)
-                                logger.info("✓ Dialog closed with fallback method")
-                                return
-                        except PlaywrightTimeoutError:
+                        if not await close_button.is_visible():
                             continue
-                    
-                    # Last resort: Try pressing Escape
-                    logger.info("Trying Escape key to close dialog")
-                    await page.keyboard.press("Escape")
-                    await page.wait_for_timeout(500)
-                    logger.info("Pressed Escape to close dialog")
-                    
-            except PlaywrightTimeoutError:
-                # No open dialog found
-                logger.debug("No open Radix dialog found (or already closed)")
-            
+                        await close_button.click(timeout=2000)
+                        await page.wait_for_timeout(400)
+                        if await open_dialog_locator().count() == 0:
+                            logger.info("Disclaimer dialog closed successfully")
+                            return
+                    except Exception as click_error:
+                        logger.debug(f"Failed clicking close selector {selector}: {click_error}")
+                        continue
+
+            logger.info("Falling back to Escape key for dialog close")
+            await page.keyboard.press("Escape")
+            await page.wait_for_timeout(400)
+
+            if await open_dialog_locator().count() == 0:
+                logger.info("Disclaimer dialog closed via Escape")
+            else:
+                logger.warning("Disclaimer dialog still appears open; interactions may fail")
         except Exception as e:
             logger.debug(f"Error handling dialog (may not exist): {e}")
+
+    @staticmethod
+    async def _find_disclosure_button(page: Page, drug_name: str):
+        """
+        Find the best matching visible accordion button for a drug result.
+        """
+        query = drug_name.strip().upper()
+        if not query:
+            return None
+
+        pattern = re.compile(rf"\b{re.escape(drug_name.strip())}\b", re.IGNORECASE)
+        buttons = page.locator("button.cursor-pointer:visible")
+        count = await buttons.count()
+
+        best_index = None
+        best_score = -1
+
+        for idx in range(count):
+            button = buttons.nth(idx)
+            try:
+                text = (await button.inner_text()).strip()
+            except Exception:
+                continue
+
+            if not text or not pattern.search(text):
+                continue
+
+            normalized = " ".join(text.upper().split())
+            if normalized == query:
+                score = 3
+            elif normalized.startswith(f"{query} (") or normalized.startswith(f"{query} +"):
+                score = 2
+            else:
+                score = 1
+
+            if score > best_score:
+                best_score = score
+                best_index = idx
+                if score == 3:
+                    break
+
+        if best_index is None:
+            return None
+
+        return buttons.nth(best_index)
 
     @staticmethod
     async def search_drug(drug_name: str) -> Optional[Dict]:
@@ -248,7 +283,7 @@ class PNDFScraper:
                         "document.title !== 'Attention Required! | Cloudflare' && !document.title.includes('Cloudflare')",
                         timeout=35000
                     )
-                    logger.info("✓ Cloudflare challenge resolved")
+                    logger.info("Cloudflare challenge resolved")
                     await page.wait_for_timeout(2000)  # Extra wait after challenge
                 except PlaywrightTimeoutError:
                     logger.error("Cloudflare challenge did not resolve in time - may need manual intervention")
@@ -270,47 +305,18 @@ class PNDFScraper:
             await page.wait_for_timeout(500)
             
             # Wait for search input to be available and visible
-            # First check if it exists in DOM, then ensure it's visible
             search_input_locator = None
             try:
-                # Wait for selector to exist
                 await page.wait_for_selector('#inputGlobalSearch', timeout=15000, state="attached")
                 logger.info("Search input found in DOM")
-                
-                # Wait for it to be visible (not hidden by dialog or loading)
+
                 search_input_locator = page.locator('#inputGlobalSearch')
                 await search_input_locator.wait_for(state="visible", timeout=10000)
-                
-                # Scroll to make sure it's in viewport
                 await search_input_locator.scroll_into_view_if_needed()
                 await page.wait_for_timeout(300)
-                
                 logger.info("Search input is visible and ready")
             except PlaywrightTimeoutError as e:
-                # Try to get page content for debugging
                 logger.error(f"Search input #inputGlobalSearch not found or not visible: {e}")
-                # Check what's actually on the page
-                try:
-                    page_title = await page.title()
-                    page_url = page.url
-                    logger.error(f"Current page title: {page_title}, URL: {page_url}")
-                    # Check if there are any inputs at all
-                    input_count = await page.locator('input').count()
-                    logger.error(f"Total inputs on page: {input_count}")
-                    if input_count > 0:
-                        # List all input IDs
-                        all_inputs = await page.locator('input').all()
-                        for i, inp in enumerate(all_inputs[:5]):  # First 5 inputs
-                            try:
-                                input_id = await inp.get_attribute('id')
-                                input_placeholder = await inp.get_attribute('placeholder')
-                                logger.error(f"Input {i}: id='{input_id}', placeholder='{input_placeholder}'")
-                            except:
-                                pass
-                except Exception as debug_error:
-                    logger.debug(f"Could not get debug info: {debug_error}")
-                
-                # Try fallback: search by placeholder text
                 try:
                     logger.info("Trying fallback: searching by placeholder text...")
                     search_input_locator = page.locator('input[placeholder*="generic name"]').first
@@ -320,166 +326,98 @@ class PNDFScraper:
                 except PlaywrightTimeoutError:
                     logger.error("Could not find search input by ID or placeholder")
                     return None
-            
-            # At this point, search_input_locator should be defined
+
             if search_input_locator is None:
                 logger.error("Search input locator is None, cannot proceed")
                 return None
-            
-            # Type drug name in search input
+
             search_input = search_input_locator
-            await search_input.fill(drug_name)
-            await page.wait_for_timeout(300)  # Small delay after typing
-            
-            # Find and click the search button using getByRole (most robust method)
-            # Using exact: true ensures we click the actual "Search" button, not other buttons with "Search" in the text
-            try:
-                search_button = page.get_by_role('button', name='Search', exact=True)
-                if await search_button.is_visible(timeout=2000):
-                    await search_button.click()
-                    logger.info("Clicked search button using getByRole")
-                else:
-                    # Fallback: try pressing Enter
-                    await search_input.press("Enter")
-                    logger.info("Search button not visible, pressed Enter on search input")
-            except PlaywrightTimeoutError:
-                # Fallback: try pressing Enter or use CSS selector
+
+            # Ensure any modal blocking pointer events is closed before typing
+            await PNDFScraper._handle_radix_dialog(page)
+
+            # Fill value and verify it actually sticks (critical on this site)
+            await search_input.click(timeout=5000, force=True)
+            await search_input.fill("")
+            await search_input.type(drug_name, delay=25)
+            typed_value = (await search_input.input_value()).strip()
+
+            if typed_value.lower() != drug_name.strip().lower():
+                logger.warning(
+                    f"Search input value mismatch after type. Expected '{drug_name}', got '{typed_value}'. Retrying with fill()"
+                )
+                await search_input.fill(drug_name)
+                typed_value = (await search_input.input_value()).strip()
+
+            if typed_value.lower() != drug_name.strip().lower():
+                logger.error(
+                    f"Search input did not accept query reliably. Expected '{drug_name}', got '{typed_value}'"
+                )
+                return None
+
+            await page.wait_for_timeout(200)
+
+            # Click the main Search action (not Apply Filters)
+            clicked = False
+            search_button_candidates = [
+                page.locator('button.bg-sambong:has-text("Search")').first,
+                page.locator('button:has-text("Search"):not(:has-text("Apply Filters"))').first,
+            ]
+
+            for candidate in search_button_candidates:
                 try:
-                    logger.info("getByRole failed, trying CSS selector fallback...")
-                    search_button = page.locator('button:has-text("Search")').first
-                    if await search_button.is_visible(timeout=1000):
-                        await search_button.click()
-                        logger.info("Clicked search button using CSS selector fallback")
-                    else:
-                        await search_input.press("Enter")
-                        logger.info("CSS selector failed, pressed Enter on search input")
-                except:
-                    await search_input.press("Enter")
-                    logger.info("All methods failed, pressed Enter on search input")
-                
-            # Wait for search results to load
-            # Wait for navigation/network activity to settle
+                    if await candidate.count() and await candidate.is_visible(timeout=1500):
+                        await candidate.click(timeout=5000)
+                        clicked = True
+                        logger.info("Clicked search button")
+                        break
+                except Exception as click_err:
+                    logger.debug(f"Search button candidate failed: {click_err}")
+
+            if not clicked:
+                await search_input.press("Enter")
+                logger.info("Search button click failed; pressed Enter on search input")
+
+            # Wait for result list refresh
             try:
                 await page.wait_for_load_state("networkidle", timeout=10000)
-                await page.wait_for_timeout(2000)  # Extra wait for dynamic content to render
-                logger.info("Waiting for search results to load...")
             except PlaywrightTimeoutError:
-                logger.warning("Page may still be loading, proceeding anyway...")
-            
-            # Wait a bit more for search results to appear in DOM
-            await page.wait_for_timeout(1000)
-            
-            # After search, there's a disclosure/accordion component that needs to be clicked to expand
-            # The button contains an h1 with the drug name and has a chevron icon
+                logger.debug("networkidle timeout after search; continuing with current DOM")
+
+            await page.wait_for_timeout(2000)
+
+            # Expand matching result card (if present) to expose details sections
             logger.info("Looking for disclosure/accordion button to expand drug details...")
-            try:
-                # Try multiple selectors to find the disclosure button
-                disclosure_button = None
-                button_selector_used = None
-                drug_name_upper = drug_name.upper()
-                
-                # Option 1: Button with h1 containing drug name (most specific)
+            disclosure_button = await PNDFScraper._find_disclosure_button(page, drug_name)
+
+            if disclosure_button is not None:
                 try:
-                    button_selector_used = f'button:has(h1:has-text("{drug_name_upper}"))'
-                    disclosure_button = page.locator(button_selector_used).first
-                    if await disclosure_button.is_visible(timeout=2000):
-                        logger.info(f"Found disclosure button (h1 selector) for {drug_name}")
-                except PlaywrightTimeoutError:
-                    # Option 2: Button with cursor-pointer class containing drug name
+                    await disclosure_button.scroll_into_view_if_needed(timeout=3000)
+                except Exception:
+                    pass
+
+                clicked_disclosure = False
+                try:
+                    await disclosure_button.click(timeout=3000)
+                    clicked_disclosure = True
+                    logger.info(f"Expanded result card for {drug_name}")
+                except Exception as click_error:
+                    logger.debug(f"Normal disclosure click failed: {click_error}")
+
+                if not clicked_disclosure:
                     try:
-                        button_selector_used = f'button.cursor-pointer:has-text("{drug_name_upper}")'
-                        disclosure_button = page.locator(button_selector_used).first
-                        if await disclosure_button.is_visible(timeout=2000):
-                            logger.info(f"Found disclosure button (cursor-pointer selector) for {drug_name}")
-                    except PlaywrightTimeoutError:
-                        # Option 3: Any button containing drug name (case-insensitive)
-                        try:
-                            button_selector_used = f'button:has-text("{drug_name}")'
-                            disclosure_button = page.locator(button_selector_used).first
-                            if await disclosure_button.is_visible(timeout=2000):
-                                logger.info(f"Found disclosure button (generic selector) for {drug_name}")
-                        except PlaywrightTimeoutError:
-                            logger.warning("Could not find disclosure button with any selector")
-                
-                if disclosure_button:
-                    logger.info(f"Preparing to click disclosure button for {drug_name}...")
-                    
-                    # Wait for button to be attached and visible
-                    try:
-                        await disclosure_button.wait_for(state="attached", timeout=3000)
-                        await disclosure_button.wait_for(state="visible", timeout=3000)
-                    except PlaywrightTimeoutError:
-                        logger.warning("Button found but not visible/attached, trying anyway...")
-                    
-                    # Scroll the button into view first
-                    try:
-                        await disclosure_button.scroll_into_view_if_needed(timeout=2000)
-                        await page.wait_for_timeout(500)
-                    except Exception as e:
-                        logger.debug(f"Could not scroll button into view: {e}")
-                    
-                    # Try clicking with multiple fallback methods
-                    logger.info(f"Clicking disclosure button to expand {drug_name} details...")
-                    clicked = False
-                    
-                    # Method 1: Normal click (shorter timeout to fail faster)
-                    try:
-                        await disclosure_button.click(timeout=3000)
-                        logger.info("Successfully clicked disclosure button (normal)")
-                        clicked = True
-                    except Exception as click_error:
-                        logger.debug(f"Normal click failed: {click_error}")
-                    
-                    # Method 2: Force click if normal failed
-                    if not clicked:
-                        try:
-                            await disclosure_button.click(timeout=3000, force=True)
-                            logger.info("Successfully clicked disclosure button (force)")
-                            clicked = True
-                        except Exception as force_error:
-                            logger.debug(f"Force click failed: {force_error}")
-                    
-                    # Method 3: JavaScript click as last resort (with timeout protection)
-                    if not clicked:
-                        try:
-                            # Check if element exists before trying to evaluate
-                            element_count = await disclosure_button.count()
-                            if element_count > 0:
-                                # Try to get the element's index or use a more direct approach
-                                # Use page.evaluate with a simpler approach - find by text content
-                                escaped_drug_name = drug_name_upper.replace('"', '\\"')
-                                await page.evaluate(f"""
-                                    (function() {{
-                                        // Find button by searching for h1 with drug name
-                                        const buttons = Array.from(document.querySelectorAll('button'));
-                                        const targetButton = buttons.find(btn => {{
-                                            const h1 = btn.querySelector('h1');
-                                            return h1 && h1.textContent.trim().toUpperCase() === '{escaped_drug_name}';
-                                        }});
-                                        if (targetButton) {{
-                                            targetButton.click();
-                                            return true;
-                                        }}
-                                        return false;
-                                    }})();
-                                """)
-                                logger.info("Successfully clicked disclosure button (JavaScript)")
-                                clicked = True
-                            else:
-                                logger.warning("Button not found in DOM for JavaScript click")
-                        except Exception as js_error:
-                            logger.warning(f"All click methods failed: {js_error}")
-                    
-                    await page.wait_for_timeout(1500)  # Wait for content to expand
-                    logger.info("Disclosure expanded, waiting for content to render...")
-                    await page.wait_for_timeout(1500)  # Extra wait for dynamic content to fully render
-                else:
-                    logger.warning("Disclosure button not found - content may already be expanded")
-                    
-            except Exception as e:
-                logger.warning(f"Error finding/clicking disclosure button: {e}")
-            
-            # Get page HTML after JavaScript execution and expansion
+                        await disclosure_button.click(timeout=3000, force=True)
+                        clicked_disclosure = True
+                        logger.info(f"Expanded result card with force click for {drug_name}")
+                    except Exception as force_error:
+                        logger.warning(f"Could not expand disclosure button for {drug_name}: {force_error}")
+
+                if clicked_disclosure:
+                    await page.wait_for_timeout(1500)
+            else:
+                logger.warning(f"No visible matching disclosure button found for {drug_name}")
+
+            # Get page HTML after JavaScript execution and optional expansion
             html_content = await page.content()
             
             # Debug HTML snapshots are disabled by default.
@@ -500,10 +438,10 @@ class PNDFScraper:
             drug_info = PNDFScraper._parse_drug_page(soup, drug_name)
 
             if drug_info:
-                logger.info(f"✓ Found drug: {drug_name}")
+                logger.info(f"Found drug: {drug_name}")
                 return drug_info
             else:
-                logger.info(f"✗ Drug not found: {drug_name}")
+                logger.info(f"Drug not found: {drug_name}")
                 return None
 
         except PlaywrightTimeoutError as e:
@@ -542,7 +480,7 @@ class PNDFScraper:
     @staticmethod
     def _parse_drug_page(soup: BeautifulSoup, drug_name: str) -> Optional[Dict]:
         """
-        Parse drug information from HTML page
+        Parse drug information from HTML page.
         Extract classification, dosage, interactions, etc.
         """
         try:
@@ -569,35 +507,28 @@ class PNDFScraper:
                 "scraped_at": datetime.now().isoformat(),
             }
 
-            # Try to find drug name section - be more flexible
-            page_text = soup.get_text().lower()
+            # Keep newlines so regex/section extraction remains robust on minified DOM.
+            full_text = soup.get_text("\n", strip=True)
+            page_text = full_text.lower()
             drug_name_lower = drug_name.lower()
-            
-            # Check if drug name appears anywhere on the page
+
             if drug_name_lower not in page_text:
                 logger.debug(f"Drug name '{drug_name}' not found anywhere in page text")
-                # Log a sample of page text for debugging
-                page_text_sample = soup.get_text()[:500]
-                logger.debug(f"Page text sample: {page_text_sample}")
+                logger.debug(f"Page text sample: {full_text[:500]}")
                 return None
-            
+
             logger.debug(f"Drug name '{drug_name}' found in page text, proceeding with extraction")
-            
-            # Try to find drug section
-            drug_section = soup.find(
-                lambda tag: tag.name and drug_name_lower in tag.get_text().lower()
+
+            # Extract ATC code (supports both "ATC Code: N02..." and "ATC Code N02...").
+            atc_match = re.search(
+                r"\bATC\s*Code\b\s*:?\s*([A-Z]\d{2}[A-Z]{2}\d{2})",
+                full_text,
+                re.IGNORECASE,
             )
-
-            if not drug_section:
-                logger.debug("Could not find specific drug section, but drug name exists in page - will try to extract anyway")
-                # Continue anyway - maybe the page structure is different
-
-            # Extract ATC Code
-            atc_match = re.search(r"ATC Code[:\s]+([A-Z]\d{2}[A-Z]{2}\d{2})", soup.get_text())
             if atc_match:
                 drug_info["atc_code"] = atc_match.group(1)
 
-            # Extract classifications
+            # Extract classifications.
             classifications = {
                 "Anatomical": "anatomical",
                 "Therapeutic": "therapeutic",
@@ -606,22 +537,23 @@ class PNDFScraper:
             }
 
             for key, field in classifications.items():
-                pattern = rf"{key}[:\s]+([^\n]+)"
-                match = re.search(pattern, soup.get_text(), re.IGNORECASE)
+                pattern = rf"\b{re.escape(key)}\b\s*:?\s*([^\n]+)"
+                match = re.search(pattern, full_text, re.IGNORECASE)
                 if match:
                     drug_info["classification"][field] = match.group(1).strip()
 
-            # Extract dosage forms (look for ORAL, RECTAL, IM, IV patterns)
-            dosage_pattern = r"(ORAL|RECTAL|IM|IV|INTRA|TOPICAL)[›:\s]+([^\n(]+)\(([^)]+)\)"
-            dosage_matches = re.findall(dosage_pattern, soup.get_text())
+            # Extract dosage forms (e.g. "ORAL > 500 mg tablet (OTC)").
+            dosage_pattern = r"(ORAL|RECTAL|IM|IV|INTRA|TOPICAL)\s*[>\u203A:\-]\s*([^\n(]+)\(([^)]+)\)"
+            dosage_matches = re.findall(dosage_pattern, full_text, re.IGNORECASE)
             for route, form, status in dosage_matches:
-                drug_info["dosage_forms"].append({
-                    "route": route.strip(),
-                    "form": form.strip(),
-                    "status": status.strip(),
-                })
+                drug_info["dosage_forms"].append(
+                    {
+                        "route": route.strip().upper(),
+                        "form": form.strip(),
+                        "status": status.strip(),
+                    }
+                )
 
-            # Extract sections using headers
             sections = {
                 "Indications": "indications",
                 "Contraindications": "contraindications",
@@ -634,31 +566,56 @@ class PNDFScraper:
                 "Pregnancy Category": "pregnancy_category",
             }
 
+            # Pass 1: text-line extraction.
+            lines = [line.strip() for line in full_text.splitlines() if line.strip()]
             for section_name, field_key in sections.items():
-                # Find section header
-                header_pattern = rf"^{section_name}\s*$"
-                lines = soup.get_text().split("\n")
-                
+                header_pattern = rf"^{re.escape(section_name)}\s*$"
+
                 for i, line in enumerate(lines):
-                    if re.match(header_pattern, line.strip(), re.IGNORECASE):
-                        # Collect content until next section header
-                        content_lines = []
-                        j = i + 1
-                        while j < len(lines):
-                            next_line = lines[j].strip()
-                            # Stop if we hit another section header
-                            if any(
-                                re.match(rf"^{s}\s*$", next_line, re.IGNORECASE)
-                                for s in sections.keys()
-                            ):
-                                break
-                            if next_line:
-                                content_lines.append(next_line)
-                            j += 1
-                        
-                        if content_lines:
-                            drug_info[field_key] = " ".join(content_lines)[:500]  # Limit length
-                        break
+                    if not re.match(header_pattern, line, re.IGNORECASE):
+                        continue
+
+                    content_lines = []
+                    j = i + 1
+                    while j < len(lines):
+                        next_line = lines[j]
+                        if any(
+                            re.match(rf"^{re.escape(section)}\s*$", next_line, re.IGNORECASE)
+                            for section in sections.keys()
+                        ):
+                            break
+                        content_lines.append(next_line)
+                        j += 1
+
+                    if content_lines:
+                        drug_info[field_key] = " ".join(content_lines)[:1000]
+                    break
+
+            # Pass 2: heading-based extraction for the current PNDF detail card layout.
+            for section_name, field_key in sections.items():
+                if drug_info[field_key]:
+                    continue
+
+                heading = soup.find(
+                    lambda tag: tag.name in {"h2", "h3", "h4"}
+                    and section_name.lower() in tag.get_text(" ", strip=True).lower()
+                )
+                if not heading:
+                    continue
+
+                if section_name == "Dosage":
+                    content_node = heading.find_next(
+                        lambda tag: tag.name in {"div", "p"} and tag.get_text(" ", strip=True)
+                    )
+                else:
+                    content_node = heading.find_next("p")
+
+                if not content_node:
+                    continue
+
+                content_text = " ".join(content_node.get_text(" ", strip=True).split())
+                if content_text:
+                    drug_info[field_key] = content_text[:1000]
 
             return drug_info
 
@@ -797,7 +754,4 @@ class PNDFScraper:
         """Clean up browser resources (call on server shutdown)"""
         await PNDFScraper._close_browser()
         logger.info("PNDF scraper cleanup complete")
-
-
-
 

@@ -6,6 +6,8 @@ import torch
 from PIL import Image
 import io
 import logging
+import json
+import re
 from datetime import datetime
 import os
 import asyncio
@@ -52,6 +54,7 @@ app.add_middleware(
 class MedicationInfo(BaseModel):
     name: str
     dosage: Optional[str] = None
+    signa: Optional[str] = None
     frequency: Optional[str] = None
     confidence: float
     original_name: Optional[str] = None
@@ -116,6 +119,8 @@ class PrescriptionResponse(BaseModel):
     raw_text: Optional[str] = None
     doctor_name: Optional[str] = None
     patient_name: Optional[str] = None
+    patient_sex: Optional[str] = None
+    patient_age: Optional[str] = None
     date: Optional[str] = None
     processing_time: float
     enriched: Optional[List[PNDFEnrichmentItem]] = None  # Backward compatibility: alias for pndf_enriched
@@ -275,9 +280,11 @@ class ModelConfig:
                     {
                         "type": "text",
                         "text": " ".join([
-                            "You are a medical OCR engine. Extract only the drug names from this prescription.",
-                            "Output format: plain comma-separated list. Exclude: all numbers, units (mg/ml/tabs).",
-                            "Remove dosages, frequencies (BID/daily), and instructions. Return only the drug names."
+                            "You are a medical prescription OCR extraction engine.",
+                            "Return ONLY valid JSON with this exact top-level schema:",
+                            '{"patient":{"name":null,"sex":null,"age":null},"doctor_name":null,"date":null,"medications":[{"name":"","dosage":null,"signa":null,"frequency":null}]}.',
+                            "Use null for unknown values. Include all medications you can read.",
+                            "Do not add markdown, prose, or code fences."
                         ])
                     },
                 ],
@@ -481,7 +488,8 @@ async def scan_prescription(file: UploadFile = File(...)):
         image = Image.open(io.BytesIO(image_data)).convert("RGB")
 
         result = model_config.predict(image)
-        medications = parse_prescription_text(result["raw_text"])
+        parsed_output = parse_model_output(result["raw_text"])
+        medications = parsed_output["medications"]
 
         drug_names = extract_enrichment_candidates(medications)
         fda_verification_data: Optional[List[FDAVerificationItem]] = None
@@ -506,6 +514,11 @@ async def scan_prescription(file: UploadFile = File(...)):
             success=True,
             medications=medications,
             raw_text=result["raw_text"],
+            doctor_name=parsed_output["doctor_name"],
+            patient_name=parsed_output["patient_name"],
+            patient_sex=parsed_output["patient_sex"],
+            patient_age=parsed_output["patient_age"],
+            date=parsed_output["date"],
             processing_time=result["processing_time"],
             fda_verification=fda_verification_data,
             pndf_enriched=pndf_enriched_data,
@@ -532,7 +545,8 @@ async def scan_batch(files: List[UploadFile] = File(...)):
             image_data = await file.read()
             image = Image.open(io.BytesIO(image_data)).convert("RGB")
             result = model_config.predict(image)
-            medications = parse_prescription_text(result["raw_text"])
+            parsed_output = parse_model_output(result["raw_text"])
+            medications = parsed_output["medications"]
 
             drug_names = extract_enrichment_candidates(medications)
             fda_verification_data = None
@@ -558,6 +572,11 @@ async def scan_batch(files: List[UploadFile] = File(...)):
                 "success": True,
                 "medications": medications,
                 "raw_text": result["raw_text"],
+                "doctor_name": parsed_output["doctor_name"],
+                "patient_name": parsed_output["patient_name"],
+                "patient_sex": parsed_output["patient_sex"],
+                "patient_age": parsed_output["patient_age"],
+                "date": parsed_output["date"],
                 "processing_time": result["processing_time"],
                 "fda_verification": fda_verification_data,
                 "pndf_enriched": pndf_enriched_data,
@@ -572,6 +591,85 @@ async def scan_batch(files: List[UploadFile] = File(...)):
             })
 
     return {"results": results, "total": len(files)}
+
+
+def _clean_optional_str(value: Any) -> Optional[str]:
+    if value is None:
+        return None
+    if isinstance(value, (int, float)):
+        value = str(value)
+    if not isinstance(value, str):
+        return None
+    cleaned = value.strip()
+    return cleaned if cleaned else None
+
+
+def _extract_json_object(raw_text: str) -> Optional[Dict[str, Any]]:
+    text = raw_text.strip()
+    if not text:
+        return None
+
+    # Strip code fences if present.
+    fenced = re.sub(r"^```(?:json)?\s*|\s*```$", "", text, flags=re.IGNORECASE | re.DOTALL).strip()
+    candidates = [fenced, text]
+
+    # Also try first JSON-looking object in the output.
+    match = re.search(r"\{.*\}", text, flags=re.DOTALL)
+    if match:
+        candidates.append(match.group(0))
+
+    for candidate in candidates:
+        try:
+            parsed = json.loads(candidate)
+            if isinstance(parsed, dict):
+                return parsed
+        except json.JSONDecodeError:
+            continue
+    return None
+
+
+def _build_medication_info(
+    token: str,
+    dosage: Optional[str] = None,
+    signa: Optional[str] = None,
+    frequency: Optional[str] = None,
+    base_flags: Optional[List[str]] = None,
+) -> MedicationInfo:
+    flags = list(base_flags or [])
+    if post_processor:
+        try:
+            results = post_processor.process_tokens([token])
+            if results:
+                result = results[0]
+                final_name = result.canonical_name if result.canonical_name else result.original_name
+                merged_flags = list(dict.fromkeys(flags + list(result.flags)))
+                return MedicationInfo(
+                    name=final_name,
+                    dosage=dosage,
+                    signa=signa,
+                    frequency=frequency,
+                    confidence=0.9,
+                    original_name=result.original_name,
+                    flags=merged_flags,
+                    match_method=result.match_method,
+                    edit_distance=result.edit_distance,
+                    similarity=result.similarity,
+                    plausibility=result.plausibility,
+                )
+        except Exception as e:
+            logger.error(f"Post-processing error: {e}")
+            flags = list(dict.fromkeys(flags + ["POST_PROCESS_ERROR"]))
+    elif "NO_POST_PROCESSOR" not in flags:
+        flags.append("NO_POST_PROCESSOR")
+
+    return MedicationInfo(
+        name=token,
+        dosage=dosage,
+        signa=signa,
+        frequency=frequency,
+        confidence=0.9,
+        flags=flags,
+    )
 
 
 def parse_prescription_text(text: str) -> List[MedicationInfo]:
@@ -593,50 +691,67 @@ def parse_prescription_text(text: str) -> List[MedicationInfo]:
         ]
 
     medications: List[MedicationInfo] = []
-    if post_processor:
-        try:
-            results = post_processor.process_tokens(unique_tokens)
-            for result in results:
-                final_name = result.canonical_name if result.canonical_name else result.original_name
-                medications.append(
-                    MedicationInfo(
-                        name=final_name,
-                        dosage=None,
-                        frequency=None,
-                        confidence=0.9,
-                        original_name=result.original_name,
-                        flags=result.flags,
-                        match_method=result.match_method,
-                        edit_distance=result.edit_distance,
-                        similarity=result.similarity,
-                        plausibility=result.plausibility,
-                    )
-                )
-        except Exception as e:
-            logger.error(f"Post-processing error: {e}")
-            for token in unique_tokens:
-                medications.append(
-                    MedicationInfo(
-                        name=token,
-                        dosage=None,
-                        frequency=None,
-                        confidence=0.9,
-                        flags=["POST_PROCESS_ERROR"],
-                    )
-                )
-    else:
-        for token in unique_tokens:
+    for token in unique_tokens:
+        medications.append(
+            _build_medication_info(
+                token=token,
+                dosage=None,
+                signa=None,
+                frequency=None,
+            )
+        )
+
+    return medications
+
+
+def parse_model_output(raw_text: str) -> Dict[str, Any]:
+    """
+    Parse structured model output first, then fall back to legacy token parsing.
+    Returns medications and extracted patient/prescriber metadata.
+    """
+    payload = _extract_json_object(raw_text)
+    if not payload:
+        return {
+            "medications": parse_prescription_text(raw_text),
+            "doctor_name": None,
+            "patient_name": None,
+            "patient_sex": None,
+            "patient_age": None,
+            "date": None,
+        }
+
+    patient = payload.get("patient") if isinstance(payload.get("patient"), dict) else {}
+    meds_payload = payload.get("medications")
+    medications: List[MedicationInfo] = []
+
+    if isinstance(meds_payload, list):
+        for item in meds_payload:
+            if not isinstance(item, dict):
+                continue
+            name = _clean_optional_str(item.get("name") or item.get("drug") or item.get("medication"))
+            if not name:
+                continue
             medications.append(
-                MedicationInfo(
-                    name=token,
-                    dosage=None,
-                    frequency=None,
-                    confidence=0.9,
-                    flags=["NO_POST_PROCESSOR"],
+                _build_medication_info(
+                    token=name,
+                    dosage=_clean_optional_str(item.get("dosage")),
+                    signa=_clean_optional_str(item.get("signa") or item.get("sig")),
+                    frequency=_clean_optional_str(item.get("frequency")),
+                    base_flags=["STRUCTURED_JSON"],
                 )
             )
 
-    return medications
+    if not medications:
+        medications = parse_prescription_text(raw_text)
+
+    return {
+        "medications": medications,
+        "doctor_name": _clean_optional_str(payload.get("doctor_name")),
+        "patient_name": _clean_optional_str(patient.get("name")) or _clean_optional_str(payload.get("patient_name")),
+        "patient_sex": _clean_optional_str(patient.get("sex")) or _clean_optional_str(payload.get("patient_sex")),
+        "patient_age": _clean_optional_str(patient.get("age")) or _clean_optional_str(payload.get("patient_age")),
+        "date": _clean_optional_str(payload.get("date")),
+    }
 
 if __name__ == "__main__":
     import uvicorn

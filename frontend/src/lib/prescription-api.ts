@@ -6,16 +6,73 @@ const API_BASE_URL = config.apiBaseUrl;
 // TypeScript interfaces for API responses
 export interface Medication {
   name: string;
-  dosage: string;
-  frequency: string;
+  dosage?: string | null;
+  signa?: string | null;
+  frequency?: string | null;
   confidence: number;
+  original_name?: string | null;
+  flags?: string[];
+  match_method?: string | null;
+  edit_distance?: number | null;
+  similarity?: number | null;
+  plausibility?: number | null;
+}
+
+export interface FDAMatch {
+  registration_number?: string | null;
+  generic_name?: string | null;
+  brand_name?: string | null;
+  dosage_strength?: string | null;
+  classification?: string | null;
+  details?: Record<string, string>;
+}
+
+export interface FDAVerificationItem {
+  query: string;
+  found: boolean;
+  matches?: FDAMatch[];
+  best_match?: FDAMatch | null;
+  error?: string | null;
+  error_code?: string | null;
+  scraped_at?: string | null;
+}
+
+export interface PNDFEnrichmentItem {
+  name: string;
+  found: boolean;
+  atc_code?: string | null;
+  classification?: Record<string, string | null | undefined> | null;
+  dosage_forms?: Array<Record<string, unknown>>;
+  indications?: string | null;
+  contraindications?: string | null;
+  precautions?: string | null;
+  adverse_reactions?: string | null;
+  drug_interactions?: string | null;
+  mechanism_of_action?: string | null;
+  dosage_instructions?: string | null;
+  administration?: string | null;
+  pregnancy_category?: string | null;
+  message?: string | null;
+  error?: string | null;
+  error_code?: string | null;
+  scraped_at?: string | null;
 }
 
 export interface PrescriptionResponse {
   success: boolean;
   medications: Medication[];
-  raw_text: string;
+  raw_text?: string;
   processing_time: number;
+  doctor_name?: string | null;
+  patient_name?: string | null;
+  patient_sex?: string | null;
+  patient_age?: string | null;
+  date?: string | null;
+  enriched?: PNDFEnrichmentItem[] | null;
+  enriched_medications?: PNDFEnrichmentItem[] | null;
+  fda_verification?: FDAVerificationItem[] | null;
+  pndf_enriched?: PNDFEnrichmentItem[] | null;
+  can_enrich?: boolean;
 }
 
 export interface HealthResponse {
