@@ -8,7 +8,7 @@ import re
 from typing import Iterable, List, Sequence
 
 PLACEHOLDER_MEDICATION_NAMES = {"unable to parse medications"}
-DISQUALIFYING_FLAGS = {"PARSE_ERROR", "POST_PROCESS_ERROR", "NO_POST_PROCESSOR", "OOV"}
+DISQUALIFYING_FLAGS = {"PARSE_ERROR", "POST_PROCESS_ERROR", "NO_POST_PROCESSOR", "LOW_PLAUSIBILITY"}
 
 _DOSAGE_PATTERN = re.compile(
     r"\b\d+(?:\.\d+)?\s*(?:mg|ml|mcg|g|tabs?|caps?(?:ules?)?|units?|iu|meq|%)\b",
@@ -86,7 +86,17 @@ def is_enrichment_candidate(name: str, flags: Sequence[str]) -> bool:
         return False
     if name.strip().lower() in PLACEHOLDER_MEDICATION_NAMES:
         return False
-    return not any(flag in DISQUALIFYING_FLAGS for flag in flags)
+
+    flag_set = set(flags)
+    if any(flag in DISQUALIFYING_FLAGS for flag in flag_set):
+        return False
+
+    # Allow plausible OOV entries to flow into enrichment so FDA/PNDF can still
+    # validate brand names that are not in our local lexicon.
+    if "OOV" in flag_set and "LOW_PLAUSIBILITY" in flag_set:
+        return False
+
+    return True
 
 
 def extract_enrichment_candidates(medications: Iterable[object]) -> List[str]:

@@ -10,7 +10,7 @@ import os
 import re
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 
 from bs4 import BeautifulSoup
 
@@ -38,7 +38,9 @@ FDA_HEADLESS = os.getenv("FDA_HEADLESS", "true").lower() != "false"
 class FDAVerificationScraper:
     """Scraper for FDA Verification Portal using Playwright for React app UI."""
 
-    REQUEST_DELAY = 0.5
+    REQUEST_DELAY = float(os.getenv("FDA_REQUEST_DELAY_SECONDS", "0.1"))
+    LOOKUP_CONCURRENCY = max(1, int(os.getenv("FDA_LOOKUP_CONCURRENCY", "2")))
+    LOOKUP_TIMEOUT_SECONDS = float(os.getenv("FDA_LOOKUP_TIMEOUT_SECONDS", "2.0"))
     CACHE_TTL_SECONDS = int(os.getenv("FDA_CACHE_TTL_SECONDS", "0"))
 
     _browser: Optional[Browser] = None
@@ -123,7 +125,7 @@ class FDAVerificationScraper:
             logger.info(f"Searching FDA for: {drug_name}")
 
             await page.goto(FDA_BASE_URL, wait_until="networkidle", timeout=30000)
-            await page.wait_for_timeout(2000)
+            await page.wait_for_timeout(800)
 
             search_input = page.locator('input[placeholder*="Type or Press mic icon"]')
             try:
@@ -137,7 +139,7 @@ class FDAVerificationScraper:
 
             await search_input.fill("")
             await search_input.fill(drug_name)
-            await page.wait_for_timeout(500)
+            await page.wait_for_timeout(150)
 
             search_button = page.locator('button[title="Search"]')
             if await search_button.is_visible(timeout=2000):
@@ -145,7 +147,7 @@ class FDAVerificationScraper:
             else:
                 await search_input.press("Enter")
 
-            await page.wait_for_timeout(3000)
+            await page.wait_for_timeout(1200)
 
             table = page.locator("table.w-full.border-collapse")
             if not await table.is_visible(timeout=5000):
@@ -373,33 +375,66 @@ class FDAVerificationScraper:
         if cache is None:
             cache = await FDAVerificationScraper.load_cache()
 
-        verified = []
+        verified: List[Dict] = [FDAVerificationScraper._base_result(query=name) for name in drug_names]
         cache_dict = {
             normalize_key(entry.get("query", "")): entry for entry in cache if normalize_key(entry.get("query", ""))
         }
+        pending: List[Tuple[int, str, str]] = []
 
-        for drug_name in drug_names:
+        for idx, drug_name in enumerate(drug_names):
             cache_key = normalize_key(drug_name)
             cached_result = cache_dict.get(cache_key)
             if cached_result:
-                verified.append(cached_result)
+                verified[idx] = cached_result
                 logger.info(f"Found {drug_name} in FDA cache")
                 continue
 
-            logger.info(f"Searching FDA for {drug_name} (not in cache)...")
-            result = await FDAVerificationScraper.search_drug(drug_name)
-            verified.append(result)
+            pending.append((idx, drug_name, cache_key))
 
-            if normalize_key(result.get("query", "")):
-                cache = await upsert_cache_entry(
-                    CACHE_PATH,
-                    result,
-                    key_fn=FDAVerificationScraper._cache_key,
-                    ensure_ascii=False,
-                )
-                cache_dict[cache_key] = result
+        if pending:
+            semaphore = asyncio.Semaphore(FDAVerificationScraper.LOOKUP_CONCURRENCY)
 
-            await asyncio.sleep(FDAVerificationScraper.REQUEST_DELAY)
+            async def _lookup(index: int, name: str, cache_key: str) -> None:
+                async with semaphore:
+                    logger.info(f"Searching FDA for {name} (not in cache)...")
+                    try:
+                        if FDAVerificationScraper.LOOKUP_TIMEOUT_SECONDS > 0:
+                            search_task = asyncio.create_task(FDAVerificationScraper.search_drug(name))
+                            done, _ = await asyncio.wait(
+                                {search_task},
+                                timeout=FDAVerificationScraper.LOOKUP_TIMEOUT_SECONDS,
+                            )
+                            if search_task not in done:
+                                search_task.cancel()
+                                raise asyncio.TimeoutError
+                            result = search_task.result()
+                        else:
+                            result = await FDAVerificationScraper.search_drug(name)
+                    except asyncio.TimeoutError:
+                        result = FDAVerificationScraper._base_result(
+                            query=name,
+                            found=False,
+                            error=(
+                                "FDA lookup timed out after "
+                                f"{FDAVerificationScraper.LOOKUP_TIMEOUT_SECONDS:.1f}s"
+                            ),
+                            error_code="timeout",
+                        )
+                    verified[index] = result
+
+                    if normalize_key(result.get("query", "")):
+                        await upsert_cache_entry(
+                            CACHE_PATH,
+                            result,
+                            key_fn=FDAVerificationScraper._cache_key,
+                            ensure_ascii=False,
+                        )
+                        cache_dict[cache_key] = result
+
+                    if FDAVerificationScraper.REQUEST_DELAY > 0:
+                        await asyncio.sleep(FDAVerificationScraper.REQUEST_DELAY)
+
+            await asyncio.gather(*(_lookup(index, name, key) for index, name, key in pending))
 
         return verified
 

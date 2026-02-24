@@ -227,6 +227,29 @@ class TestDrugPostProcessing(unittest.TestCase):
         self.assertIn("LEXICON_UNAVAILABLE", result.flags)
         self.assertIn("OOV", result.flags)
 
+    def test_ambiguous_candidates_abstain(self):
+        """Near-tied fuzzy candidates should abstain instead of forcing correction."""
+        temp_lexicon = tempfile.NamedTemporaryFile(mode='w', delete=False, suffix='.txt')
+        try:
+            temp_lexicon.write('\n'.join([
+                'KAMILLOSAN',
+                'KAMILLORIN',
+            ]))
+            temp_lexicon.close()
+
+            config = PostProcessingConfig(
+                lexicon_path=temp_lexicon.name,
+                max_edit_distance=2,
+                min_similarity=0.8,
+                ambiguity_margin=0.2,
+            )
+            processor = DrugPostProcessor(config)
+            result = processor.process_token("kamillosin")
+            self.assertIsNone(result.canonical_name)
+            self.assertIn("OOV", result.flags)
+        finally:
+            os.unlink(temp_lexicon.name)
+
 
 class TestParsingIntegration(unittest.TestCase):
     """Test parsing and post-processing integration"""

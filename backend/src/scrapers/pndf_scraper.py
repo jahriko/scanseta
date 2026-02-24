@@ -8,8 +8,8 @@ import logging
 import asyncio
 import os
 from pathlib import Path
-from typing import List, Dict, Optional
-from datetime import datetime
+from typing import List, Dict, Optional, Tuple
+from datetime import datetime, timedelta
 from bs4 import BeautifulSoup
 import re
 from .cache_utils import load_cache, normalize_key, save_cache, upsert_cache_entry
@@ -38,12 +38,16 @@ class PNDFScraper:
     """Scraper for Philippine National Drug Formulary using Playwright for JS-rendered content"""
 
     # Request delay (seconds) between searches to respect server
-    REQUEST_DELAY = 0.5
+    REQUEST_DELAY = float(os.getenv("PNDF_REQUEST_DELAY_SECONDS", "0.1"))
+    LOOKUP_CONCURRENCY = max(1, int(os.getenv("PNDF_LOOKUP_CONCURRENCY", "2")))
+    LOOKUP_TIMEOUT_SECONDS = float(os.getenv("PNDF_LOOKUP_TIMEOUT_SECONDS", "2.0"))
     CACHE_TTL_SECONDS = int(os.getenv("PNDF_CACHE_TTL_SECONDS", "0"))
+    NEGATIVE_CACHE_TTL_SECONDS = int(os.getenv("PNDF_NEGATIVE_CACHE_TTL_SECONDS", "900"))
     
     # Shared browser instance (initialized lazily)
     _browser: Optional[Browser] = None
     _playwright_context = None
+    _negative_cache: Dict[str, datetime] = {}
 
     @staticmethod
     def _cache_key(entry: Dict) -> Optional[str]:
@@ -53,6 +57,32 @@ class PNDFScraper:
     def _safe_filename(value: str) -> str:
         safe = re.sub(r"[^a-zA-Z0-9._-]+", "_", value.strip())
         return safe.strip("._") or "query"
+
+    @staticmethod
+    def _purge_negative_cache() -> None:
+        if not PNDFScraper._negative_cache:
+            return
+
+        now = datetime.now()
+        expired_keys = [key for key, expiry in PNDFScraper._negative_cache.items() if expiry <= now]
+        for key in expired_keys:
+            PNDFScraper._negative_cache.pop(key, None)
+
+    @staticmethod
+    def _is_negative_cache_hit(cache_key: str) -> bool:
+        if not cache_key or PNDFScraper.NEGATIVE_CACHE_TTL_SECONDS <= 0:
+            return False
+        PNDFScraper._purge_negative_cache()
+        expiry = PNDFScraper._negative_cache.get(cache_key)
+        return bool(expiry and expiry > datetime.now())
+
+    @staticmethod
+    def _remember_negative_lookup(cache_key: str) -> None:
+        if not cache_key or PNDFScraper.NEGATIVE_CACHE_TTL_SECONDS <= 0:
+            return
+        PNDFScraper._negative_cache[cache_key] = datetime.now() + timedelta(
+            seconds=PNDFScraper.NEGATIVE_CACHE_TTL_SECONDS
+        )
 
     @staticmethod
     async def _get_browser() -> Browser:
@@ -647,55 +677,102 @@ class PNDFScraper:
         if cache is None:
             cache = await PNDFScraper.load_cache()
 
-        enriched = []
+        enriched: List[Dict] = [{"name": drug_name, "found": False} for drug_name in drug_names]
         cache_dict = {
             normalize_key(drug.get("name", "")): drug
             for drug in cache
             if normalize_key(drug.get("name", ""))
         }
+        pending: List[Tuple[int, str, str]] = []
 
-        for drug_name in drug_names:
+        for idx, drug_name in enumerate(drug_names):
             drug_name_key = normalize_key(drug_name)
 
             cached_drug = cache_dict.get(drug_name_key)
             if cached_drug:
-                enriched.append(cached_drug)
+                enriched[idx] = cached_drug
                 logger.info(f"Found {drug_name} in cache")
+            elif PNDFScraper._is_negative_cache_hit(drug_name_key):
+                enriched[idx] = {
+                    "name": drug_name,
+                    "found": False,
+                    "message": "Skipped PNDF retry after recent miss/error",
+                    "error_code": "recent_miss_cache",
+                    "scraped_at": datetime.now().isoformat(),
+                }
+                logger.info(f"Skipping PNDF lookup for {drug_name} due to recent miss/error cache")
             else:
-                logger.info(f"Searching for {drug_name} (not in cache)...")
-                try:
-                    drug_info = await PNDFScraper.search_drug(drug_name)
-                    if drug_info:
-                        enriched.append(drug_info)
-                        cache = await upsert_cache_entry(
-                            CACHE_PATH,
-                            drug_info,
-                            key_fn=PNDFScraper._cache_key,
-                        )
-                        cache_dict[drug_name_key] = drug_info
-                    else:
-                        error_code = "playwright_unavailable" if not PLAYWRIGHT_AVAILABLE else "not_found"
-                        message = (
-                            "Scraper runtime unavailable"
-                            if error_code == "playwright_unavailable"
-                            else "Not found in PNDF database"
-                        )
-                        enriched.append({
+                pending.append((idx, drug_name, drug_name_key))
+
+        if pending:
+            semaphore = asyncio.Semaphore(PNDFScraper.LOOKUP_CONCURRENCY)
+
+            async def _lookup(index: int, drug_name: str, drug_name_key: str) -> None:
+                async with semaphore:
+                    logger.info(f"Searching for {drug_name} (not in cache)...")
+                    try:
+                        if PNDFScraper.LOOKUP_TIMEOUT_SECONDS > 0:
+                            search_task = asyncio.create_task(PNDFScraper.search_drug(drug_name))
+                            done, _ = await asyncio.wait(
+                                {search_task},
+                                timeout=PNDFScraper.LOOKUP_TIMEOUT_SECONDS,
+                            )
+                            if search_task not in done:
+                                search_task.cancel()
+                                raise asyncio.TimeoutError
+                            drug_info = search_task.result()
+                        else:
+                            drug_info = await PNDFScraper.search_drug(drug_name)
+                        if drug_info:
+                            enriched[index] = drug_info
+                            await upsert_cache_entry(
+                                CACHE_PATH,
+                                drug_info,
+                                key_fn=PNDFScraper._cache_key,
+                            )
+                            cache_dict[drug_name_key] = drug_info
+                        else:
+                            PNDFScraper._remember_negative_lookup(drug_name_key)
+                            error_code = "playwright_unavailable" if not PLAYWRIGHT_AVAILABLE else "not_found"
+                            message = (
+                                "Scraper runtime unavailable"
+                                if error_code == "playwright_unavailable"
+                                else "Not found in PNDF database"
+                            )
+                            enriched[index] = {
+                                "name": drug_name,
+                                "found": False,
+                                "message": message,
+                                "error_code": error_code,
+                                "scraped_at": datetime.now().isoformat(),
+                            }
+                    except asyncio.TimeoutError:
+                        PNDFScraper._remember_negative_lookup(drug_name_key)
+                        enriched[index] = {
                             "name": drug_name,
                             "found": False,
-                            "message": message,
-                            "error_code": error_code,
-                        })
-                except Exception as e:
-                    logger.error(f"Error enriching {drug_name}: {e}")
-                    enriched.append({
-                        "name": drug_name,
-                        "found": False,
-                        "error": str(e),
-                        "error_code": "scrape_error",
-                    })
+                            "message": (
+                                "PNDF lookup timed out after "
+                                f"{PNDFScraper.LOOKUP_TIMEOUT_SECONDS:.1f}s"
+                            ),
+                            "error_code": "timeout",
+                            "scraped_at": datetime.now().isoformat(),
+                        }
+                    except Exception as e:
+                        logger.error(f"Error enriching {drug_name}: {e}")
+                        PNDFScraper._remember_negative_lookup(drug_name_key)
+                        enriched[index] = {
+                            "name": drug_name,
+                            "found": False,
+                            "error": str(e),
+                            "error_code": "scrape_error",
+                            "scraped_at": datetime.now().isoformat(),
+                        }
 
-                await asyncio.sleep(PNDFScraper.REQUEST_DELAY)
+                    if PNDFScraper.REQUEST_DELAY > 0:
+                        await asyncio.sleep(PNDFScraper.REQUEST_DELAY)
+
+            await asyncio.gather(*(_lookup(index, name, key) for index, name, key in pending))
 
         return enriched
 
@@ -753,5 +830,6 @@ class PNDFScraper:
     async def cleanup():
         """Clean up browser resources (call on server shutdown)"""
         await PNDFScraper._close_browser()
+        PNDFScraper._negative_cache.clear()
         logger.info("PNDF scraper cleanup complete")
 

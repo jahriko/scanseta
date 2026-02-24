@@ -73,6 +73,28 @@ export interface PrescriptionResponse {
   fda_verification?: FDAVerificationItem[] | null;
   pndf_enriched?: PNDFEnrichmentItem[] | null;
   can_enrich?: boolean;
+  enrichment_job_id?: string | null;
+  enrichment_status?: string;
+  fda_enrichment_status?: string | null;
+  pndf_enrichment_status?: string | null;
+  enrichment_updated_at?: string | null;
+}
+
+export interface EnrichmentJobStatusResponse {
+  success: boolean;
+  job_id: string;
+  status: string;
+  fda_status: string;
+  pndf_status: string;
+  drug_names: string[];
+  fda_verification: FDAVerificationItem[];
+  pndf_enriched: PNDFEnrichmentItem[];
+  errors?: Record<string, string>;
+  created_at?: string | null;
+  started_at?: string | null;
+  finished_at?: string | null;
+  updated_at?: string | null;
+  expires_at?: string | null;
 }
 
 export interface HealthResponse {
@@ -168,6 +190,33 @@ export const scanPrescription = async (file: File): Promise<PrescriptionResponse
     if (!res.ok) {
       const errorData = await res.json().catch(() => ({}));
       const errorMessage = errorData.detail || `Scan failed with status ${res.status}`;
+      throw new Error(errorMessage);
+    }
+    return res.json();
+  } catch (error) {
+    if (error instanceof TypeError && error.message.includes('fetch')) {
+      throw new Error('Cannot connect to server. Please check your network connection and API URL.');
+    }
+    throw error;
+  }
+};
+
+export const getEnrichmentJobStatus = async (jobId: string): Promise<EnrichmentJobStatusResponse> => {
+  if (!API_BASE_URL) {
+    throw new Error('API URL is not configured. Please set VITE_API_BASE_URL environment variable.');
+  }
+
+  try {
+    const res = await fetch(`${API_BASE_URL}/enrichment-jobs/${encodeURIComponent(jobId)}`, {
+      method: 'GET',
+      headers: {
+        'Accept': 'application/json',
+      },
+    });
+
+    if (!res.ok) {
+      const errorData = await res.json().catch(() => ({}));
+      const errorMessage = errorData.detail || `Enrichment status failed with status ${res.status}`;
       throw new Error(errorMessage);
     }
     return res.json();

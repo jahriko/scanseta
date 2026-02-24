@@ -85,6 +85,28 @@ npm run check-env
   - `NGRAM_N`
   - `PLAUSIBILITY_THRESHOLD`
   - `MAX_CANDIDATES`
+  - `MAX_LENGTH_DELTA`
+  - `MIN_SIMILARITY_FOR_EDIT`
+  - `AMBIGUITY_MARGIN`
+- Enrichment/cache tuning:
+  - `PNDF_NEGATIVE_CACHE_TTL_SECONDS`
+  - `SCAN_RESULT_CACHE_TTL_SECONDS`
+  - `SCAN_RESULT_CACHE_MAX_ENTRIES`
+
+### Build Lexicon from PH Sources (via local PNDF/FDA cache)
+
+Run from `backend/`:
+
+```powershell
+python scripts/build_drug_lexicon.py
+```
+
+Notes:
+- Reads `backend/data/pndf_cache.json` + `backend/data/fda_cache.json`
+- Merges optional `backend/data/drug_lexicon_overrides.txt`
+- Writes `backend/data/drug_lexicon.txt`
+- By default, preserves existing lexicon entries to avoid accidental shrink
+- Use `--replace-output` for strict rebuild from cache + overrides only
 
 ## API Endpoints
 

@@ -30,6 +30,9 @@ class PostProcessingConfig:
     ngram_n: int = 3
     plausibility_threshold: float = -1.0
     max_candidates: int = 10
+    max_length_delta: int = 3
+    min_similarity_for_edit: float = 0.75
+    ambiguity_margin: float = 0.025
 
 
 @dataclass
@@ -157,40 +160,63 @@ class CandidateGenerator:
         if not candidates:
             return None, None, None, None
         
-        # Collect all candidates that meet either threshold
+        # Collect all candidates that meet threshold requirements
         valid_candidates = []
         
         for candidate in candidates:
-            # Compute edit distance
+            # Compute edit distance/similarity and apply conservative guards
             edit_dist = self.levenshtein_distance(normalized_token, candidate)
-            
-            # Compute similarity
             similarity = SequenceMatcher(None, normalized_token, candidate).ratio()
-            
-            # Check if meets either threshold
-            meets_edit_threshold = edit_dist <= self.config.max_edit_distance
-            meets_similarity_threshold = similarity >= self.config.min_similarity
-            
+
+            length_delta = abs(len(normalized_token) - len(candidate))
+            max_len = max(len(normalized_token), len(candidate), 1)
+            normalized_edit = edit_dist / max_len
+
+            meets_edit_threshold = (
+                edit_dist <= self.config.max_edit_distance
+                and similarity >= self.config.min_similarity_for_edit
+                and length_delta <= self.config.max_length_delta
+            )
+            meets_similarity_threshold = (
+                similarity >= self.config.min_similarity
+                and length_delta <= self.config.max_length_delta
+                and normalized_edit <= 0.45
+            )
+
             if meets_edit_threshold or meets_similarity_threshold:
+                score = (similarity * 0.75) + ((1.0 - min(normalized_edit, 1.0)) * 0.25)
+                if normalized_token and candidate and normalized_token[0] == candidate[0]:
+                    score += 0.01
+
                 valid_candidates.append({
                     'canonical': self.normalized_to_canonical[candidate],
                     'edit_dist': edit_dist,
                     'similarity': similarity,
                     'meets_edit': meets_edit_threshold,
-                    'meets_similarity': meets_similarity_threshold
+                    'meets_similarity': meets_similarity_threshold,
+                    'score': score,
                 })
         
         if not valid_candidates:
             return None, None, None, None
         
-        # Select best candidate: prefer edit_distance matches, then by best score
-        # Priority: edit_distance matches with lower distance, then similarity matches with higher similarity
+        # Select best candidate by blended score, with edit distance as tiebreaker.
         valid_candidates.sort(key=lambda x: (
-            not x['meets_edit'],  # Edit distance matches first (False < True)
-            x['edit_dist'] if x['meets_edit'] else float('inf'),  # Lower edit distance better
-            -x['similarity']  # Higher similarity better
+            -x['score'],
+            not x['meets_edit'],
+            x['edit_dist'],
+            -x['similarity'],
         ))
-        
+
+        # If the top candidates are effectively tied, abstain to avoid unsafe
+        # forced corrections.
+        if len(valid_candidates) > 1:
+            best = valid_candidates[0]
+            second = valid_candidates[1]
+            if best['canonical'] != second['canonical']:
+                if abs(best['score'] - second['score']) < self.config.ambiguity_margin:
+                    return None, None, None, None
+
         best = valid_candidates[0]
         best_method = "edit_distance" if best['meets_edit'] else "similarity"
         

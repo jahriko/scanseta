@@ -6,7 +6,7 @@ import { Card } from "@/components/ui/card";
 import { toast } from "sonner";
 import ProcessingScreen from "@/components/ProcessingScreen";
 import ResultsScreen from "@/components/ResultsScreen";
-import { getHealth, loadModel, PrescriptionResponse, scanPrescription } from "@/lib/prescription-api";
+import { getEnrichmentJobStatus, getHealth, loadModel, PrescriptionResponse, scanPrescription } from "@/lib/prescription-api";
 import { config, validateConfig } from "@/lib/config";
 
 type AppState = "upload" | "processing" | "results" | "error";
@@ -15,12 +15,25 @@ const processingSteps = [
   { label: "Uploading image to server", duration: 500 },
   { label: "Analyzing image with AI model", duration: 1500 },
   { label: "Extracting medication information", duration: 1000 },
-  { label: "Validating prescription data", duration: 500 },
+  { label: "Finalizing scan response", duration: 500 },
+];
+
+const terminalEnrichmentStatuses = new Set(["completed", "partial", "failed", "timed_out", "expired", "not_requested"]);
+const demoPrescriptionImages = [
+  "RX000005.jpg",
+  "RX002290.jpg",
+  "RX002335.jpg",
+  "RX002336.jpg",
+  "RX002340.jpg",
+  "RX002347.jpg",
+  "RX002359.jpg",
+  "RX002364.png",
 ];
 
 const Index = () => {
   const [appState, setAppState] = useState<AppState>("upload");
   const [imagePreview, setImagePreview] = useState<string>("");
+  const [previewObjectUrl, setPreviewObjectUrl] = useState<string | null>(null);
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const [scanResults, setScanResults] = useState<PrescriptionResponse | null>(null);
   const [isModelLoaded, setIsModelLoaded] = useState<boolean>(false);
@@ -30,6 +43,32 @@ const Index = () => {
   const [scanError, setScanError] = useState<string | null>(null);
   const [progress, setProgress] = useState(0);
   const [currentStep, setCurrentStep] = useState(0);
+  const [isSelectingDemo, setIsSelectingDemo] = useState(false);
+
+  const resetScanState = () => {
+    setScanResults(null);
+    setScanError(null);
+    setProgress(0);
+    setCurrentStep(0);
+  };
+
+  const resetPreview = () => {
+    setImagePreview("");
+    setPreviewObjectUrl((previousUrl) => {
+      if (previousUrl) {
+        URL.revokeObjectURL(previousUrl);
+      }
+      return null;
+    });
+  };
+
+  useEffect(() => {
+    return () => {
+      if (previewObjectUrl) {
+        URL.revokeObjectURL(previewObjectUrl);
+      }
+    };
+  }, [previewObjectUrl]);
 
   useEffect(() => {
     const checkHealth = async () => {
@@ -150,6 +189,93 @@ const Index = () => {
     };
   }, [appState, selectedFile]);
 
+  useEffect(() => {
+    if (!scanResults?.enrichment_job_id) {
+      return;
+    }
+
+    const currentStatus = (scanResults.enrichment_status ?? "").toLowerCase();
+    if (!currentStatus || terminalEnrichmentStatuses.has(currentStatus)) {
+      return;
+    }
+
+    let isActive = true;
+    let pollTimer: ReturnType<typeof setInterval> | undefined;
+    let pollAttempts = 0;
+    const maxPollAttempts = 20;
+
+    const pollStatus = async () => {
+      if (!isActive || !scanResults.enrichment_job_id) {
+        return;
+      }
+
+      pollAttempts += 1;
+      try {
+        const status = await getEnrichmentJobStatus(scanResults.enrichment_job_id);
+        if (!isActive) {
+          return;
+        }
+
+        setScanResults((previous) => {
+          if (!previous || previous.enrichment_job_id !== status.job_id) {
+            return previous;
+          }
+
+          return {
+            ...previous,
+            enrichment_status: status.status,
+            fda_enrichment_status: status.fda_status,
+            pndf_enrichment_status: status.pndf_status,
+            enrichment_updated_at: status.updated_at ?? previous.enrichment_updated_at ?? null,
+            fda_verification: status.fda_verification,
+            pndf_enriched: status.pndf_enriched,
+            enriched: status.pndf_enriched,
+            enriched_medications: status.pndf_enriched,
+          };
+        });
+
+        const normalizedStatus = (status.status ?? "").toLowerCase();
+        if (terminalEnrichmentStatuses.has(normalizedStatus) && pollTimer) {
+          clearInterval(pollTimer);
+        }
+      } catch (error) {
+        if (!isActive) {
+          return;
+        }
+        if (pollAttempts >= maxPollAttempts && pollTimer) {
+          clearInterval(pollTimer);
+        }
+      }
+
+      if (pollAttempts >= maxPollAttempts && pollTimer) {
+        clearInterval(pollTimer);
+        setScanResults((previous) => {
+          if (!previous) {
+            return previous;
+          }
+          return {
+            ...previous,
+            enrichment_status: "timed_out",
+            enrichment_updated_at: previous.enrichment_updated_at ?? new Date().toISOString(),
+          };
+        });
+      }
+    };
+
+    pollStatus();
+    pollTimer = setInterval(pollStatus, 1000);
+
+    return () => {
+      isActive = false;
+      if (pollTimer) {
+        clearInterval(pollTimer);
+      }
+    };
+  }, [
+    scanResults?.enrichment_job_id,
+    scanResults?.enrichment_status,
+  ]);
+
   const handleLoadModel = async () => {
     setIsLoadingModel(true);
     try {
@@ -176,11 +302,9 @@ const Index = () => {
         return;
       }
 
+      resetPreview();
       setSelectedFile(file);
-      setScanResults(null);
-      setScanError(null);
-      setProgress(0);
-      setCurrentStep(0);
+      resetScanState();
 
       const reader = new FileReader();
       reader.onloadend = () => {
@@ -193,14 +317,45 @@ const Index = () => {
     event.target.value = "";
   };
 
+  const handleDemoImageSelect = async (fileName: string) => {
+    if (!isModelLoaded) {
+      toast.error("Please load the model first before scanning.");
+      return;
+    }
+    if (!configValid || isCheckingHealth) {
+      return;
+    }
+
+    setIsSelectingDemo(true);
+    try {
+      const response = await fetch(`/demo-prescriptions/${fileName}`);
+      if (!response.ok) {
+        throw new Error(`Failed to load demo image (${response.status})`);
+      }
+
+      const blob = await response.blob();
+      const file = new File([blob], fileName, { type: blob.type || "image/jpeg" });
+      const objectUrl = URL.createObjectURL(blob);
+
+      resetPreview();
+      setPreviewObjectUrl(objectUrl);
+      setImagePreview(objectUrl);
+      setSelectedFile(file);
+      resetScanState();
+      setAppState("processing");
+    } catch (error) {
+      const errorMessage = error instanceof Error ? error.message : "Could not load demo image.";
+      toast.error(errorMessage);
+    } finally {
+      setIsSelectingDemo(false);
+    }
+  };
+
   const handleScanAnother = () => {
     setAppState("upload");
-    setImagePreview("");
+    resetPreview();
     setSelectedFile(null);
-    setScanResults(null);
-    setScanError(null);
-    setProgress(0);
-    setCurrentStep(0);
+    resetScanState();
   };
 
   if (appState === "upload") {
@@ -218,7 +373,7 @@ const Index = () => {
 
             <div>
               <h1 className="text-4xl md:text-5xl font-bold text-foreground mb-3">
-                Prescription Scanner
+                Scanseta
               </h1>
               <p className="text-muted-foreground text-lg">
                 Upload or capture your medical prescription to extract medication information instantly
@@ -313,6 +468,37 @@ const Index = () => {
                   </span>
                 </Button>
               </label>
+            </div>
+
+            <div className="pt-2">
+              <p className="text-sm font-medium text-foreground mb-3">Demo prescriptions</p>
+              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                {demoPrescriptionImages.map((fileName) => (
+                  <button
+                    key={fileName}
+                    type="button"
+                    className="group relative rounded-lg overflow-hidden border bg-muted/30 disabled:opacity-50 disabled:cursor-not-allowed"
+                    onClick={() => handleDemoImageSelect(fileName)}
+                    disabled={!isModelLoaded || isCheckingHealth || !configValid || isSelectingDemo}
+                  >
+                    <img
+                      src={`/demo-prescriptions/${fileName}`}
+                      alt={`Demo ${fileName}`}
+                      className="h-24 w-full object-cover transition-transform duration-200 group-hover:scale-[1.03]"
+                      loading="lazy"
+                    />
+                    <span className="absolute inset-x-0 bottom-0 bg-black/60 text-white text-[11px] px-2 py-1 truncate">
+                      {fileName}
+                    </span>
+                  </button>
+                ))}
+              </div>
+              {isSelectingDemo && (
+                <p className="mt-3 text-xs text-muted-foreground flex items-center justify-center gap-1.5">
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  Loading demo image...
+                </p>
+              )}
             </div>
 
             <div className="pt-6 border-t border-border mt-8">

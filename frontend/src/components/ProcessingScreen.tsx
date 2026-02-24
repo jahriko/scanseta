@@ -22,7 +22,7 @@ const ProcessingScreen = ({ progress, currentStep, steps }: ProcessingScreenProp
         </div>
         <h2 className="text-2xl font-semibold text-foreground">Analyzing your image</h2>
         <p className="text-sm text-muted-foreground">
-          Please keep this window open while extraction and validation complete.
+          OCR extraction happens first, then drug validation continues in the background.
         </p>
       </div>
 

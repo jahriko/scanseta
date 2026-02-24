@@ -34,10 +34,11 @@ class TestTokenProcessing(unittest.TestCase):
             SimpleNamespace(name="PARACETAMOL", flags=[]),
             SimpleNamespace(name="Unable to parse medications", flags=["PARSE_ERROR"]),
             SimpleNamespace(name="UNKNOWN", flags=["OOV"]),
+            SimpleNamespace(name="qxz", flags=["OOV", "LOW_PLAUSIBILITY"]),
             SimpleNamespace(name="ibuprofen", flags=[]),
             SimpleNamespace(name="Ibuprofen", flags=[]),
         ]
-        self.assertEqual(extract_enrichment_candidates(meds), ["PARACETAMOL", "ibuprofen"])
+        self.assertEqual(extract_enrichment_candidates(meds), ["PARACETAMOL", "UNKNOWN", "ibuprofen"])
 
 
 if __name__ == "__main__":
