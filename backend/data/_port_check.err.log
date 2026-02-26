@@ -1,0 +1,69 @@
+INFO:main:Using device: cuda
+INFO:main:Using SCAN_MAX_NEW_TOKENS=192
+INFO:src.post_processing.drug_postprocessor:Loaded 109 drugs from lexicon
+INFO:src.post_processing.drug_postprocessor:Trained n-gram model on 109 drugs, 619 unique 3-grams, vocab_size=28
+INFO:main:Drug post-processor initialized
+INFO:     Started server process [31692]
+INFO:     Waiting for application startup.
+INFO:main:Loading model on startup: Qwen/Qwen2.5-VL-7B-Instruct + scanseta/qwen_prescription_model
+INFO:main:Loading base model: Qwen/Qwen2.5-VL-7B-Instruct with adapter: scanseta/qwen_prescription_model
+'[WinError 10013] An attempt was made to access a socket in a way forbidden by its access permissions' thrown while requesting HEAD https://huggingface.co/Qwen/Qwen2.5-VL-7B-Instruct/resolve/main/processor_config.json
+WARNING:huggingface_hub.utils._http:'[WinError 10013] An attempt was made to access a socket in a way forbidden by its access permissions' thrown while requesting HEAD https://huggingface.co/Qwen/Qwen2.5-VL-7B-Instruct/resolve/main/processor_config.json
+Retrying in 1s [Retry 1/5].
+WARNING:huggingface_hub.utils._http:Retrying in 1s [Retry 1/5].
+ERROR:main:Error loading model: Cannot send a request, as the client has been closed.
+ERROR:main:Failed to load model on startup: Cannot send a request, as the client has been closed.
+ERROR:main:Server will not start without a loaded model
+ERROR:    Traceback (most recent call last):
+  File "C:\Users\NICK SENTERO\projects\scanseta\backend\main.py", line 1266, in startup_event
+    model_config.load_model(base_model, adapter_repo)
+  File "C:\Users\NICK SENTERO\projects\scanseta\backend\main.py", line 535, in load_model
+    processor, model, load_metadata = load_qwen_vl_with_lora(base_model, adapter_repo)
+  File "C:\Users\NICK SENTERO\projects\scanseta\backend\main.py", line 293, in load_qwen_vl_with_lora
+    processor = AutoProcessor.from_pretrained(base_model_id, trust_remote_code=True)
+  File "C:\Users\NICK SENTERO\projects\scanseta\backend\.venv\lib\site-packages\transformers\models\auto\processing_auto.py", line 302, in from_pretrained
+    processor_config_file = cached_file(pretrained_model_name_or_path, PROCESSOR_NAME, **cached_file_kwargs)
+  File "C:\Users\NICK SENTERO\projects\scanseta\backend\.venv\lib\site-packages\transformers\utils\hub.py", line 276, in cached_file
+    file = cached_files(path_or_repo_id=path_or_repo_id, filenames=[filename], **kwargs)
+  File "C:\Users\NICK SENTERO\projects\scanseta\backend\.venv\lib\site-packages\transformers\utils\hub.py", line 507, in cached_files
+    raise e
+  File "C:\Users\NICK SENTERO\projects\scanseta\backend\.venv\lib\site-packages\transformers\utils\hub.py", line 419, in cached_files
+    hf_hub_download(
+  File "C:\Users\NICK SENTERO\projects\scanseta\backend\.venv\lib\site-packages\huggingface_hub\utils\_validators.py", line 89, in _inner_fn
+    return fn(*args, **kwargs)
+  File "C:\Users\NICK SENTERO\projects\scanseta\backend\.venv\lib\site-packages\huggingface_hub\file_download.py", line 1032, in hf_hub_download
+    return _hf_hub_download_to_cache_dir(
+  File "C:\Users\NICK SENTERO\projects\scanseta\backend\.venv\lib\site-packages\huggingface_hub\file_download.py", line 1165, in _hf_hub_download_to_cache_dir
+    _get_metadata_or_catch_error(
+  File "C:\Users\NICK SENTERO\projects\scanseta\backend\.venv\lib\site-packages\huggingface_hub\file_download.py", line 1699, in _get_metadata_or_catch_error
+    metadata = get_hf_file_metadata(
+  File "C:\Users\NICK SENTERO\projects\scanseta\backend\.venv\lib\site-packages\huggingface_hub\utils\_validators.py", line 89, in _inner_fn
+    return fn(*args, **kwargs)
+  File "C:\Users\NICK SENTERO\projects\scanseta\backend\.venv\lib\site-packages\huggingface_hub\file_download.py", line 1622, in get_hf_file_metadata
+    response = _httpx_follow_relative_redirects(
+  File "C:\Users\NICK SENTERO\projects\scanseta\backend\.venv\lib\site-packages\huggingface_hub\file_download.py", line 302, in _httpx_follow_relative_redirects
+    response = http_backoff(
+  File "C:\Users\NICK SENTERO\projects\scanseta\backend\.venv\lib\site-packages\huggingface_hub\utils\_http.py", line 506, in http_backoff
+    return next(
+  File "C:\Users\NICK SENTERO\projects\scanseta\backend\.venv\lib\site-packages\huggingface_hub\utils\_http.py", line 414, in _http_backoff_base
+    response = client.request(method=method, url=url, **kwargs)
+  File "C:\Users\NICK SENTERO\projects\scanseta\backend\.venv\lib\site-packages\httpx\_client.py", line 814, in request
+    return self.send(request, auth=auth, follow_redirects=follow_redirects)
+  File "C:\Users\NICK SENTERO\projects\scanseta\backend\.venv\lib\site-packages\httpx\_client.py", line 890, in send
+    raise RuntimeError("Cannot send a request, as the client has been closed.")
+RuntimeError: Cannot send a request, as the client has been closed.
+
+The above exception was the direct cause of the following exception:
+
+Traceback (most recent call last):
+  File "C:\Users\NICK SENTERO\projects\scanseta\backend\.venv\lib\site-packages\starlette\routing.py", line 677, in lifespan
+    async with self.lifespan_context(app) as maybe_state:
+  File "C:\Users\NICK SENTERO\projects\scanseta\backend\.venv\lib\site-packages\starlette\routing.py", line 566, in __aenter__
+    await self._router.startup()
+  File "C:\Users\NICK SENTERO\projects\scanseta\backend\.venv\lib\site-packages\starlette\routing.py", line 654, in startup
+    await handler()
+  File "C:\Users\NICK SENTERO\projects\scanseta\backend\main.py", line 1271, in startup_event
+    raise RuntimeError(f"Failed to load model: {e}") from e
+RuntimeError: Failed to load model: Cannot send a request, as the client has been closed.
+
+ERROR:    Application startup failed. Exiting.

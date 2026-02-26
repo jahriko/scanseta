@@ -8,7 +8,8 @@ import re
 from typing import Iterable, List, Sequence
 
 PLACEHOLDER_MEDICATION_NAMES = {"unable to parse medications"}
-DISQUALIFYING_FLAGS = {"PARSE_ERROR", "POST_PROCESS_ERROR", "NO_POST_PROCESSOR", "LOW_PLAUSIBILITY"}
+HARD_DISQUALIFYING_FLAGS = {"PARSE_ERROR", "POST_PROCESS_ERROR", "NO_POST_PROCESSOR"}
+TRUSTED_STRUCTURED_FLAGS = {"STRUCTURED_JSON", "STRUCTURED_JSON_PARTIAL"}
 
 _DOSAGE_PATTERN = re.compile(
     r"\b\d+(?:\.\d+)?\s*(?:mg|ml|mcg|g|tabs?|caps?(?:ules?)?|units?|iu|meq|%)\b",
@@ -88,12 +89,19 @@ def is_enrichment_candidate(name: str, flags: Sequence[str]) -> bool:
         return False
 
     flag_set = set(flags)
-    if any(flag in DISQUALIFYING_FLAGS for flag in flag_set):
+    if any(flag in HARD_DISQUALIFYING_FLAGS for flag in flag_set):
+        return False
+
+    is_structured_output = any(flag in TRUSTED_STRUCTURED_FLAGS for flag in flag_set)
+
+    # Keep OCR-token heuristics strict, but trust model-emitted structured fields
+    # even when plausibility scoring is conservative.
+    if "LOW_PLAUSIBILITY" in flag_set and not is_structured_output:
         return False
 
     # Allow plausible OOV entries to flow into enrichment so FDA/PNDF can still
     # validate brand names that are not in our local lexicon.
-    if "OOV" in flag_set and "LOW_PLAUSIBILITY" in flag_set:
+    if "OOV" in flag_set and "LOW_PLAUSIBILITY" in flag_set and not is_structured_output:
         return False
 
     return True

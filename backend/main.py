@@ -1,7 +1,7 @@
 from fastapi import FastAPI, File, UploadFile, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict, Any, Tuple
 import torch
 from PIL import Image
 import io
@@ -28,6 +28,10 @@ try:
     from transformers import BitsAndBytesConfig
 except ImportError:
     BitsAndBytesConfig = None
+try:
+    from huggingface_hub.utils._http import close_session as close_hf_session
+except Exception:  # pragma: no cover - defensive fallback
+    close_hf_session = None
 from peft import PeftModel
 from src.scrapers.pndf_scraper import PNDFScraper
 from src.scrapers.fda_verification_scraper import FDAVerificationScraper
@@ -172,6 +176,23 @@ def _truthy_env(value: Optional[str]) -> bool:
     return value.strip().lower() in {"1", "true", "yes", "on"}
 
 
+ALLOWED_LOAD_POLICIES = {"fail_fast", "fallback_auto", "fallback_auto_cpu"}
+DEFAULT_LOAD_POLICY = "fail_fast"
+
+
+def _resolve_load_policy() -> str:
+    raw_policy = os.getenv("HF_LOAD_POLICY", DEFAULT_LOAD_POLICY).strip().lower()
+    if raw_policy in ALLOWED_LOAD_POLICIES:
+        return raw_policy
+
+    logger.warning(
+        "Invalid HF_LOAD_POLICY=%s. Falling back to %s.",
+        raw_policy,
+        DEFAULT_LOAD_POLICY,
+    )
+    return DEFAULT_LOAD_POLICY
+
+
 def _is_gpu_device(device: Any) -> bool:
     if isinstance(device, int):
         return device >= 0
@@ -190,6 +211,123 @@ def _to_fda_item(item: Dict[str, Any]) -> FDAVerificationItem:
     return FDAVerificationItem(**item)
 
 
+def _resolve_device_map_configuration() -> Dict[str, Any]:
+    configured_device_map_raw = os.getenv("HF_DEVICE_MAP")
+    if configured_device_map_raw is None or not configured_device_map_raw.strip():
+        configured_device_map_raw = "cuda:0" if torch.cuda.is_available() else "cpu"
+        source = "default"
+    else:
+        configured_device_map_raw = configured_device_map_raw.strip()
+        source = "env"
+
+    single_device_target: Optional[str] = None
+    if configured_device_map_raw.startswith("cuda") or configured_device_map_raw == "cpu":
+        resolved_device_map: Any = {"": configured_device_map_raw}
+        single_device_target = configured_device_map_raw
+        mode = "single_gpu" if configured_device_map_raw.startswith("cuda") else "cpu"
+    elif configured_device_map_raw == "auto":
+        resolved_device_map = "auto"
+        mode = "auto"
+    else:
+        resolved_device_map = configured_device_map_raw
+        mode = "custom"
+
+    return {
+        "raw": configured_device_map_raw,
+        "resolved": resolved_device_map,
+        "single_device_target": single_device_target,
+        "source": source,
+        "mode": mode,
+    }
+
+
+def _offloaded_language_modules(model: Any) -> List[str]:
+    device_map = getattr(model, "hf_device_map", None)
+    if not isinstance(device_map, dict):
+        return []
+
+    language_modules = {
+        module_name: device
+        for module_name, device in device_map.items()
+        if "language_model" in module_name
+        or module_name.endswith("lm_head")
+        or ".lm_head" in module_name
+    }
+    if not language_modules:
+        return []
+    return [
+        module_name
+        for module_name, device in language_modules.items()
+        if not _is_gpu_device(device)
+    ]
+
+
+def _model_language_on_gpu(model: Any) -> Tuple[bool, List[str]]:
+    offloaded = _offloaded_language_modules(model)
+    if offloaded:
+        return False, offloaded
+
+    device_map = getattr(model, "hf_device_map", None)
+    if isinstance(device_map, dict):
+        language_entries = [
+            module_name
+            for module_name in device_map
+            if "language_model" in module_name
+            or module_name.endswith("lm_head")
+            or ".lm_head" in module_name
+        ]
+        if language_entries:
+            return True, []
+
+    try:
+        first_parameter_device = str(next(model.parameters()).device)
+    except StopIteration:
+        first_parameter_device = "cpu"
+    return first_parameter_device.startswith("cuda"), []
+
+
+def _retry_on_closed_hf_client(load_callable, *, stage: str, max_retries: int = 1):
+    attempts = 0
+    while True:
+        try:
+            return load_callable()
+        except RuntimeError as exc:
+            if "client has been closed" not in str(exc).lower() or attempts >= max_retries:
+                raise
+            attempts += 1
+            logger.warning(
+                "Closed Hugging Face HTTP client while loading %s (retry %d/%d).",
+                stage,
+                attempts,
+                max_retries,
+            )
+            if close_hf_session is not None:
+                try:
+                    close_hf_session()
+                except Exception as close_exc:  # pragma: no cover - defensive fallback
+                    logger.debug("Failed to reset Hugging Face HTTP client session: %s", close_exc)
+
+
+def _raise_model_source_error(
+    *,
+    stage: str,
+    base_model_id: str,
+    local_files_only: bool,
+    error: Exception,
+) -> None:
+    local_mode_hint = (
+        "HF_LOCAL_FILES_ONLY=1 is enabled; only local files/cache will be used. "
+        if local_files_only
+        else "Model files are downloaded from Hugging Face when not already cached. "
+    )
+    raise RuntimeError(
+        f"Failed to load {stage} for '{base_model_id}': {error}. "
+        f"{local_mode_hint}"
+        "Set HF_BASE_MODEL to a local model directory that contains model and processor files, "
+        "or allow outbound HTTPS access to huggingface.co."
+    ) from error
+
+
 # Helper function to load Qwen VL with LoRA adapter
 def load_qwen_vl_with_lora(base_model_id: str, adapter_repo: Optional[str]):
     if AutoModelForVision2Seq is None:
@@ -198,125 +336,142 @@ def load_qwen_vl_with_lora(base_model_id: str, adapter_repo: Optional[str]):
             "Install a compatible transformers version or update model loader mappings."
         )
 
-    processor = AutoProcessor.from_pretrained(base_model_id, trust_remote_code=True)
+    # Set cache directories before any Hugging Face load call so processor/model
+    # resolution uses the intended location on first attempt.
+    hf_home = os.getenv("HF_HOME", os.path.abspath("./hf_home"))
+    transformers_cache = os.getenv("TRANSFORMERS_CACHE", os.path.abspath("./hf_cache"))
+    os.environ["HF_HOME"] = hf_home
+    os.environ["TRANSFORMERS_CACHE"] = transformers_cache
+    os.makedirs(hf_home, exist_ok=True)
+    os.makedirs(transformers_cache, exist_ok=True)
 
+    local_files_only = _truthy_env(os.getenv("HF_LOCAL_FILES_ONLY", "0"))
+    processor_kwargs: Dict[str, Any] = {"trust_remote_code": True}
+    if local_files_only:
+        processor_kwargs["local_files_only"] = True
+
+    try:
+        processor = _retry_on_closed_hf_client(
+            lambda: AutoProcessor.from_pretrained(base_model_id, **processor_kwargs),
+            stage="processor",
+        )
+    except Exception as exc:
+        _raise_model_source_error(
+            stage="processor",
+            base_model_id=base_model_id,
+            local_files_only=local_files_only,
+            error=exc,
+        )
+
+    load_policy = _resolve_load_policy()
     dtype = torch.float16 if torch.cuda.is_available() else torch.float32
-    configured_device_map_raw = os.getenv("HF_DEVICE_MAP", "auto").strip()
-    single_device_target: Optional[str] = None
-    if configured_device_map_raw.startswith("cuda") or configured_device_map_raw == "cpu":
-        # Explicit single-device placement avoids accelerate meta-device sharding edge cases.
-        configured_device_map: Any = {"": configured_device_map_raw}
-        single_device_target = configured_device_map_raw
-    else:
-        configured_device_map = configured_device_map_raw
+    device_map_config = _resolve_device_map_configuration()
+    configured_device_map_raw = device_map_config["raw"]
+    configured_device_map = device_map_config["resolved"]
+    single_device_target = device_map_config["single_device_target"]
+    configured_device_map_mode = device_map_config["mode"]
+    device_map_source = device_map_config["source"]
 
     offload_dir = os.getenv("HF_OFFLOAD_DIR", "./offload")
     os.makedirs(offload_dir, exist_ok=True)
 
-    # Helps some accelerate/transformers combos pick it up during dispatch
-    os.environ["HF_HOME"] = os.getenv("HF_HOME", os.path.abspath("./hf_home"))
-    os.environ["TRANSFORMERS_CACHE"] = os.getenv("TRANSFORMERS_CACHE", os.path.abspath("./hf_cache"))
-
-    from_pretrained_kwargs = {
-        "trust_remote_code": True,
-        "dtype": dtype,
-        "device_map": configured_device_map,
-        "offload_state_dict": True,
-        "low_cpu_mem_usage": single_device_target is None,
-        "offload_folder": offload_dir,
-        "offload_dir": offload_dir,
-    }
     logger.info(
-        "Using HF_DEVICE_MAP raw=%s resolved=%s",
+        "Model load config: policy=%s HF_DEVICE_MAP raw=%s source=%s resolved=%s",
+        load_policy,
         configured_device_map_raw,
+        device_map_source,
         configured_device_map,
     )
-    if configured_device_map != "auto":
-        from_pretrained_kwargs.pop("offload_state_dict", None)
-        from_pretrained_kwargs.pop("offload_folder", None)
-        from_pretrained_kwargs.pop("offload_dir", None)
+    if single_device_target and single_device_target.startswith("cuda") and not torch.cuda.is_available():
+        raise RuntimeError(
+            f"HF_DEVICE_MAP={configured_device_map_raw} requested CUDA placement but CUDA is unavailable."
+        )
+
     enable_4bit = _truthy_env(os.getenv("HF_ENABLE_4BIT", "1")) and torch.cuda.is_available()
-    if enable_4bit:
-        if BitsAndBytesConfig is None:
-            logger.warning(
-                "HF_ENABLE_4BIT is enabled but BitsAndBytesConfig is unavailable. Continuing without 4-bit quantization."
-            )
-        else:
-            from_pretrained_kwargs["quantization_config"] = BitsAndBytesConfig(
-                load_in_4bit=True,
-                bnb_4bit_quant_type="nf4",
-                bnb_4bit_compute_dtype=torch.float16,
-                bnb_4bit_use_double_quant=True,
-            )
-            from_pretrained_kwargs.pop("dtype", None)
-            logger.info("Using 4-bit quantization for model loading (HF_ENABLE_4BIT=1).")
 
-    def _load_model_with_current_kwargs():
-        try:
-            return AutoModelForVision2Seq.from_pretrained(
-                base_model_id,
-                **from_pretrained_kwargs,
-            )
-        except TypeError as exc:
-            if "offload_dir" in str(exc):
-                from_pretrained_kwargs.pop("offload_dir", None)
-            elif "offload_folder" in str(exc):
-                from_pretrained_kwargs.pop("offload_folder", None)
+    def _build_from_pretrained_kwargs(device_map: Any, target_device: Optional[str]) -> Dict[str, Any]:
+        kwargs: Dict[str, Any] = {
+            "trust_remote_code": True,
+            "dtype": dtype,
+            "device_map": device_map,
+            "low_cpu_mem_usage": target_device is None,
+        }
+        if local_files_only:
+            kwargs["local_files_only"] = True
+        if device_map == "auto":
+            kwargs["offload_state_dict"] = True
+            kwargs["offload_folder"] = offload_dir
+            kwargs["offload_dir"] = offload_dir
+        if enable_4bit:
+            if BitsAndBytesConfig is None:
+                logger.warning(
+                    "HF_ENABLE_4BIT is enabled but BitsAndBytesConfig is unavailable. Continuing without 4-bit quantization."
+                )
             else:
-                raise
-            return AutoModelForVision2Seq.from_pretrained(
-                base_model_id,
-                **from_pretrained_kwargs,
-            )
-        except RuntimeError as exc:
-            if "offload_dir" not in str(exc):
-                raise
-            logger.warning(
-                "Auto device_map requires offload_dir. Falling back to CPU load."
-            )
-            fallback_kwargs = {
-                "trust_remote_code": True,
-                "dtype": torch.float32,
-                "device_map": "cpu",
-                "low_cpu_mem_usage": True,
-            }
-            return AutoModelForVision2Seq.from_pretrained(
-                base_model_id,
-                **fallback_kwargs,
-            )
+                kwargs["quantization_config"] = BitsAndBytesConfig(
+                    load_in_4bit=True,
+                    bnb_4bit_quant_type="nf4",
+                    bnb_4bit_compute_dtype=torch.float16,
+                    bnb_4bit_use_double_quant=True,
+                )
+                kwargs.pop("dtype", None)
+                logger.info("Using 4-bit quantization for model loading (HF_ENABLE_4BIT=1).")
+        return kwargs
 
-    try:
-        model = _load_model_with_current_kwargs()
-    except ImportError as exc:
-        error_text = str(exc).lower()
-        if "bitsandbytes" in error_text and "quantization_config" in from_pretrained_kwargs:
+    def _load_model_for_attempt(device_map: Any, target_device: Optional[str]) -> Any:
+        from_pretrained_kwargs = _build_from_pretrained_kwargs(device_map, target_device)
+
+        def _load_once(load_kwargs: Dict[str, Any]) -> Any:
+            current_kwargs = dict(load_kwargs)
+            while True:
+                try:
+                    return _retry_on_closed_hf_client(
+                        lambda: AutoModelForVision2Seq.from_pretrained(
+                            base_model_id,
+                            **current_kwargs,
+                        ),
+                        stage="model weights",
+                    )
+                except TypeError as exc:
+                    if "offload_dir" in str(exc) and "offload_dir" in current_kwargs:
+                        current_kwargs.pop("offload_dir", None)
+                        continue
+                    if "offload_folder" in str(exc) and "offload_folder" in current_kwargs:
+                        current_kwargs.pop("offload_folder", None)
+                        continue
+                    raise
+
+        try:
+            return _load_once(from_pretrained_kwargs)
+        except ImportError as exc:
+            if "bitsandbytes" not in str(exc).lower() or "quantization_config" not in from_pretrained_kwargs:
+                raise
             logger.warning(
                 "4-bit quantization unavailable (%s). Retrying without quantization.",
                 exc,
             )
             from_pretrained_kwargs.pop("quantization_config", None)
             from_pretrained_kwargs["dtype"] = dtype
-            model = _load_model_with_current_kwargs()
-        else:
-            raise
+            return _load_once(from_pretrained_kwargs)
 
-    if single_device_target:
-        model.to(single_device_target)
+    def _attach_adapter(current_model: Any, target_device: Optional[str]) -> Any:
+        if not adapter_repo:
+            logger.warning("No adapter specified - using base model only (lower accuracy for prescriptions)")
+            return current_model
 
-    if adapter_repo:
-        logger.info(f"Loading LoRA adapter: {adapter_repo}")
+        logger.info("Loading LoRA adapter: %s", adapter_repo)
         try:
             adapter_kwargs: Dict[str, Any] = {"low_cpu_mem_usage": False}
-            if single_device_target:
-                adapter_kwargs["torch_device"] = single_device_target
-            model = PeftModel.from_pretrained(model, adapter_repo, **adapter_kwargs)
+            if target_device:
+                adapter_kwargs["torch_device"] = target_device
+            current_model = PeftModel.from_pretrained(current_model, adapter_repo, **adapter_kwargs)
         except TypeError as exc:
             if "unhashable type: 'set'" not in str(exc):
                 raise
 
             # Compatibility fallback for certain peft/accelerate versions
             # where nested set entries in _no_split_modules can break hashing.
-            no_split_modules = getattr(model, "_no_split_modules", None)
+            no_split_modules = getattr(current_model, "_no_split_modules", None)
             flattened_modules: List[str] = []
             if isinstance(no_split_modules, (list, tuple, set)):
                 for entry in no_split_modules:
@@ -328,46 +483,95 @@ def load_qwen_vl_with_lora(base_model_id: str, adapter_repo: Optional[str]):
                         )
 
             if flattened_modules:
-                model._no_split_modules = list(dict.fromkeys(flattened_modules))
+                current_model._no_split_modules = list(dict.fromkeys(flattened_modules))
 
             logger.warning(
                 "Retrying LoRA adapter load with peft/accelerate compatibility fallback."
             )
-            model = PeftModel.from_pretrained(
-                model,
+            current_model = PeftModel.from_pretrained(
+                current_model,
                 adapter_repo,
                 low_cpu_mem_usage=False,
-                torch_device=single_device_target,
+                torch_device=target_device,
             )
-        logger.info("✓ LoRA adapter loaded successfully")
-    else:
-        logger.warning("⚠️  No adapter specified - using base model only (lower accuracy for prescriptions)")
+        logger.info("LoRA adapter loaded successfully")
+        return current_model
 
-    model.eval()
-    device_map = getattr(model, "hf_device_map", None)
-    if isinstance(device_map, dict):
-        language_modules = {
-            module_name: device
-            for module_name, device in device_map.items()
-            if "language_model" in module_name or module_name.endswith("lm_head") or ".lm_head" in module_name
-        }
-        offloaded_language_modules = [
-            module_name
-            for module_name, device in language_modules.items()
-            if not _is_gpu_device(device)
-        ]
-        if offloaded_language_modules:
-            logger.warning(
-                "Language model modules are offloaded from GPU: %s. Generation will be slow.",
-                ", ".join(offloaded_language_modules[:5]),
+    load_attempts: List[Tuple[Any, Optional[str], str, bool]] = [
+        (configured_device_map, single_device_target, configured_device_map_mode, False)
+    ]
+    if (
+        device_map_source == "default"
+        and configured_device_map_mode == "single_gpu"
+        and load_policy in {"fallback_auto", "fallback_auto_cpu"}
+    ):
+        load_attempts.append(("auto", None, "auto", True))
+        if load_policy == "fallback_auto_cpu":
+            load_attempts.append(({"": "cpu"}, "cpu", "cpu", True))
+
+    attempt_count = len(load_attempts)
+    last_error: Optional[Exception] = None
+    for index, (attempt_device_map, attempt_target, attempt_mode, fallback_used) in enumerate(
+        load_attempts,
+        start=1,
+    ):
+        try:
+            logger.info(
+                "Model load attempt %d/%d: mode=%s device_map=%s",
+                index,
+                attempt_count,
+                attempt_mode,
+                attempt_device_map,
             )
-            require_gpu_language_model = _truthy_env(os.getenv("HF_REQUIRE_GPU_LANGUAGE_MODEL"))
-            if require_gpu_language_model:
-                raise RuntimeError(
-                    "HF_REQUIRE_GPU_LANGUAGE_MODEL=1 and language model is not fully on GPU."
+            model = _load_model_for_attempt(attempt_device_map, attempt_target)
+            if attempt_target:
+                model.to(attempt_target)
+            model = _attach_adapter(model, attempt_target)
+            model.eval()
+
+            language_model_on_gpu, offloaded_language_modules = _model_language_on_gpu(model)
+            if offloaded_language_modules:
+                logger.warning(
+                    "Language model modules are offloaded from GPU: %s",
+                    ", ".join(offloaded_language_modules[:5]),
                 )
-    return processor, model
 
+            require_gpu_language_model = (
+                load_policy == "fail_fast"
+                or _truthy_env(os.getenv("HF_REQUIRE_GPU_LANGUAGE_MODEL"))
+            )
+            if require_gpu_language_model and not language_model_on_gpu:
+                raise RuntimeError(
+                    "Language model is not fully on GPU. "
+                    f"Offloaded modules: {', '.join(offloaded_language_modules[:5])}"
+                )
+
+            return processor, model, {
+                "load_policy": load_policy,
+                "device_map_mode": attempt_mode,
+                "language_model_on_gpu": language_model_on_gpu,
+                "degraded_mode": fallback_used,
+                "resolved_device_map": attempt_device_map,
+                "configured_device_map_raw": configured_device_map_raw,
+            }
+        except Exception as exc:
+            last_error = exc
+            logger.error(
+                "Model load attempt %d/%d failed (mode=%s): %s",
+                index,
+                attempt_count,
+                attempt_mode,
+                exc,
+            )
+            if index < attempt_count:
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
+                continue
+            break
+
+    raise RuntimeError(
+        f"Failed to load model using policy '{load_policy}': {last_error}"
+    ) from last_error
 # Model Configuration
 class ModelConfig:
     def __init__(self):
@@ -375,9 +579,17 @@ class ModelConfig:
         self.model = None
         self.processor = None
         self.max_new_tokens = int(os.getenv("SCAN_MAX_NEW_TOKENS", "192"))
+        self.load_policy = _resolve_load_policy()
+        self.device_map_mode = "unloaded"
+        self.language_model_on_gpu = False
+        self.degraded_mode = False
+        self.last_load_error: Optional[str] = None
         logger.info(f"Using device: {self.device}")
         logger.info(f"Using SCAN_MAX_NEW_TOKENS={self.max_new_tokens}")
     
+    def is_ready(self) -> bool:
+        return self.model is not None and not self.degraded_mode
+
     def load_model(self, base_model: str, adapter_repo: Optional[str] = None):
         """Load Qwen2.5-VL base model with LoRA adapter
         
@@ -391,10 +603,23 @@ class ModelConfig:
         
         try:
             logger.info(f"Loading base model: {base_model} with adapter: {adapter_repo}")
-            self.processor, self.model = load_qwen_vl_with_lora(base_model, adapter_repo)
-            logger.info("✓ Model loaded successfully with prescription adapter")
+            self.load_policy = _resolve_load_policy()
+            processor, model, load_metadata = load_qwen_vl_with_lora(base_model, adapter_repo)
+            self.processor = processor
+            self.model = model
+            self.device_map_mode = str(load_metadata.get("device_map_mode", "unknown"))
+            self.language_model_on_gpu = bool(load_metadata.get("language_model_on_gpu", False))
+            self.degraded_mode = bool(load_metadata.get("degraded_mode", False))
+            self.last_load_error = None
+            logger.info(
+                "Model loaded successfully with policy=%s mode=%s degraded=%s",
+                self.load_policy,
+                self.device_map_mode,
+                self.degraded_mode,
+            )
             
         except Exception as e:
+            self.last_load_error = str(e)
             logger.error(f"Error loading model: {e}")
             raise
     
@@ -404,6 +629,11 @@ class ModelConfig:
             "model_loaded": model_loaded,
             "device": self.device,
             "gpu_available": torch.cuda.is_available(),
+            "load_policy": self.load_policy,
+            "device_map_mode": self.device_map_mode,
+            "language_model_on_gpu": bool(model_loaded and self.language_model_on_gpu),
+            "degraded_mode": bool(model_loaded and self.degraded_mode),
+            "last_load_error": self.last_load_error,
         }
         if torch.cuda.is_available():
             status["gpu_name"] = torch.cuda.get_device_name(0)
@@ -518,7 +748,7 @@ try:
         ambiguity_margin=float(os.getenv("AMBIGUITY_MARGIN", "0.025")),
     )
     post_processor = DrugPostProcessor(post_processor_config)
-    logger.info("✓ Drug post-processor initialized")
+    logger.info("Drug post-processor initialized")
 except Exception as e:
     logger.warning(f"Could not initialize post-processor: {e}")
     post_processor = None
@@ -528,8 +758,8 @@ SCAN_RESULT_CACHE_MAX_ENTRIES = int(os.getenv("SCAN_RESULT_CACHE_MAX_ENTRIES", "
 _scan_result_cache: Dict[str, Dict[str, Any]] = {}
 _scan_result_cache_lock = asyncio.Lock()
 ENRICHMENT_JOB_TTL_SECONDS = int(os.getenv("ENRICHMENT_JOB_TTL_SECONDS", "1800"))
-ENRICHMENT_FDA_TIMEOUT_SECONDS = float(os.getenv("ENRICHMENT_FDA_TIMEOUT_SECONDS", "2.5"))
-ENRICHMENT_PNDF_TIMEOUT_SECONDS = float(os.getenv("ENRICHMENT_PNDF_TIMEOUT_SECONDS", "2.5"))
+ENRICHMENT_FDA_TIMEOUT_SECONDS = float(os.getenv("ENRICHMENT_FDA_TIMEOUT_SECONDS", "60"))
+ENRICHMENT_PNDF_TIMEOUT_SECONDS = float(os.getenv("ENRICHMENT_PNDF_TIMEOUT_SECONDS", "75"))
 ENRICHMENT_MAX_DRUGS = int(os.getenv("ENRICHMENT_MAX_DRUGS", "3"))
 ENRICHMENT_PERSIST_DEBOUNCE_SECONDS = float(os.getenv("ENRICHMENT_PERSIST_DEBOUNCE_SECONDS", "0.15"))
 ENRICHMENT_STORE_PATH = Path(__file__).resolve().parent / "data" / "enrichment_jobs.json"
@@ -820,6 +1050,7 @@ async def _execute_fda_lookup(drug_names: List[str]) -> Dict[str, Any]:
         }
     except asyncio.TimeoutError:
         reason = f"FDA validation timed out after {ENRICHMENT_FDA_TIMEOUT_SECONDS:.1f}s"
+        logger.warning(reason)
         return {
             "status": "timed_out",
             "results": _build_fda_timeout_results(drug_names, reason, "timeout"),
@@ -849,6 +1080,7 @@ async def _execute_pndf_lookup(drug_names: List[str]) -> Dict[str, Any]:
         }
     except asyncio.TimeoutError:
         reason = f"PNDF validation timed out after {ENRICHMENT_PNDF_TIMEOUT_SECONDS:.1f}s"
+        logger.warning(reason)
         return {
             "status": "timed_out",
             "results": _build_pndf_timeout_results(drug_names, reason, "timeout"),
@@ -1090,7 +1322,7 @@ async def initialize_pndf_cache():
     try:
         logger.info("Initializing PNDF cache...")
         await PNDFScraper.refresh_cache()
-        logger.info("✓ PNDF cache initialization complete")
+        logger.info("PNDF cache initialization complete")
     except Exception as e:
         logger.warning(f"Could not initialize PNDF cache: {e}")
 
@@ -1104,9 +1336,9 @@ async def startup_event():
     try:
         logger.info(f"Loading model on startup: {base_model} + {adapter_repo}")
         model_config.load_model(base_model, adapter_repo)
-        logger.info("✓ Model loaded successfully on startup")
+        logger.info("Model loaded successfully on startup")
     except Exception as e:
-        logger.error(f"❌ Failed to load model on startup: {e}")
+        logger.error(f"Failed to load model on startup: {e}")
         logger.error("Server will not start without a loaded model")
         raise RuntimeError(f"Failed to load model: {e}") from e
     
@@ -1131,7 +1363,7 @@ async def shutdown_event():
         await _flush_enrichment_jobs_persist()
         await PNDFScraper.cleanup()
         await FDAVerificationScraper.cleanup()
-        logger.info("✓ Server shutdown cleanup complete")
+        logger.info("Server shutdown cleanup complete")
     except Exception as e:
         logger.warning(f"Error during shutdown cleanup: {e}")
 
@@ -1148,6 +1380,7 @@ async def health_check():
     return {
         "status": "healthy",
         "model_loaded": model_config.model is not None,
+        "model_ready": model_config.is_ready(),
         "device": model_config.device,
         "gpu_available": torch.cuda.is_available()
     }
@@ -1178,10 +1411,21 @@ async def load_model(
             "success": True, 
             "message": "Model loaded successfully",
             "base_model": base_model,
-            "adapter_repo": adapter_repo
+            "adapter_repo": adapter_repo,
+            "load_policy": model_config.load_policy,
+            "device_map_mode": model_config.device_map_mode,
+            "degraded_mode": model_config.degraded_mode,
         }
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        raise HTTPException(
+            status_code=500,
+            detail={
+                "message": "Model load failed",
+                "error": str(e),
+                "load_policy": model_config.load_policy,
+                "last_load_error": model_config.last_load_error,
+            },
+        )
 
 @app.post("/enrich-medications", response_model=EnrichmentResponse)
 async def enrich_medications(request: EnrichmentRequest):
@@ -1492,6 +1736,98 @@ def _extract_json_object(raw_text: str) -> Optional[Dict[str, Any]]:
     return None
 
 
+def _strip_json_code_fence(raw_text: str) -> str:
+    if not raw_text:
+        return ""
+    return re.sub(
+        r"^\s*```(?:json)?\s*|\s*```\s*$",
+        "",
+        raw_text.strip(),
+        flags=re.IGNORECASE | re.DOTALL,
+    ).strip()
+
+
+def _extract_partial_structured_output(raw_text: str) -> Dict[str, Any]:
+    """
+    Recover structured fields from truncated JSON-like model output.
+    This handles responses that start as valid JSON but are cut off mid-stream.
+    """
+    text = _strip_json_code_fence(raw_text)
+
+    if not text:
+        return {
+            "medications": [],
+            "doctor_name": None,
+            "patient_name": None,
+            "patient_sex": None,
+            "patient_age": None,
+            "date": None,
+        }
+
+    def _extract_with_pattern(pattern: str, source: str) -> Optional[str]:
+        match = re.search(pattern, source, flags=re.IGNORECASE | re.DOTALL)
+        if not match:
+            return None
+        return _clean_optional_str(match.group(1))
+
+    patient_block_match = re.search(r'"patient"\s*:\s*\{(.*?)\}', text, flags=re.IGNORECASE | re.DOTALL)
+    patient_block = patient_block_match.group(1) if patient_block_match else ""
+
+    doctor_name = _extract_with_pattern(r'"doctor_name"\s*:\s*"([^"]*)"', text)
+    patient_name = (
+        _extract_with_pattern(r'"name"\s*:\s*"([^"]*)"', patient_block)
+        or _extract_with_pattern(r'"patient_name"\s*:\s*"([^"]*)"', text)
+    )
+    patient_sex = (
+        _extract_with_pattern(r'"sex"\s*:\s*"([^"]*)"', patient_block)
+        or _extract_with_pattern(r'"patient_sex"\s*:\s*"([^"]*)"', text)
+    )
+    patient_age = (
+        _extract_with_pattern(r'"age"\s*:\s*"([^"]*)"', patient_block)
+        or _extract_with_pattern(r'"patient_age"\s*:\s*"([^"]*)"', text)
+    )
+    date = _extract_with_pattern(r'"date"\s*:\s*"([^"]*)"', text)
+
+    medications: List[MedicationInfo] = []
+    seen_names: set[str] = set()
+    meds_section_match = re.search(r'"medications"\s*:\s*\[(.*)$', text, flags=re.IGNORECASE | re.DOTALL)
+    meds_section = meds_section_match.group(1) if meds_section_match else ""
+
+    if meds_section:
+        for match in re.finditer(r'"name"\s*:\s*"([^"\r\n]+)"', meds_section, flags=re.IGNORECASE):
+            name = _clean_optional_str(match.group(1))
+            if not name:
+                continue
+
+            normalized_name = name.lower()
+            if normalized_name in {"redacted"} or normalized_name in seen_names:
+                continue
+            seen_names.add(normalized_name)
+
+            window = meds_section[match.end() : match.end() + 320]
+            dosage = _extract_with_pattern(r'"dosage"\s*:\s*"([^"]*)"', window)
+            signa = _extract_with_pattern(r'"(?:signa|sig)"\s*:\s*"([^"]*)"', window)
+            frequency = _extract_with_pattern(r'"frequency"\s*:\s*"([^"]*)"', window)
+            medications.append(
+                _build_medication_info(
+                    token=name,
+                    dosage=dosage,
+                    signa=signa,
+                    frequency=frequency,
+                    base_flags=["STRUCTURED_JSON_PARTIAL"],
+                )
+            )
+
+    return {
+        "medications": medications,
+        "doctor_name": doctor_name,
+        "patient_name": patient_name,
+        "patient_sex": patient_sex,
+        "patient_age": patient_age,
+        "date": date,
+    }
+
+
 def _build_medication_info(
     token: str,
     dosage: Optional[str] = None,
@@ -1575,13 +1911,17 @@ def parse_model_output(raw_text: str) -> Dict[str, Any]:
     """
     payload = _extract_json_object(raw_text)
     if not payload:
+        partial = _extract_partial_structured_output(raw_text)
+        if partial.get("medications"):
+            return partial
+
         return {
-            "medications": parse_prescription_text(raw_text),
-            "doctor_name": None,
-            "patient_name": None,
-            "patient_sex": None,
-            "patient_age": None,
-            "date": None,
+            "medications": parse_prescription_text(_strip_json_code_fence(raw_text)),
+            "doctor_name": partial.get("doctor_name"),
+            "patient_name": partial.get("patient_name"),
+            "patient_sex": partial.get("patient_sex"),
+            "patient_age": partial.get("patient_age"),
+            "date": partial.get("date"),
         }
 
     patient = payload.get("patient") if isinstance(payload.get("patient"), dict) else {}
@@ -1620,4 +1960,5 @@ def parse_model_output(raw_text: str) -> Dict[str, Any]:
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8000)
+
 

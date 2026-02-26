@@ -40,8 +40,14 @@ class FDAVerificationScraper:
 
     REQUEST_DELAY = float(os.getenv("FDA_REQUEST_DELAY_SECONDS", "0.1"))
     LOOKUP_CONCURRENCY = max(1, int(os.getenv("FDA_LOOKUP_CONCURRENCY", "2")))
-    LOOKUP_TIMEOUT_SECONDS = float(os.getenv("FDA_LOOKUP_TIMEOUT_SECONDS", "2.0"))
-    CACHE_TTL_SECONDS = int(os.getenv("FDA_CACHE_TTL_SECONDS", "0"))
+    LOOKUP_TIMEOUT_SECONDS = float(os.getenv("FDA_LOOKUP_TIMEOUT_SECONDS", "45"))
+    CACHE_TTL_SECONDS = int(os.getenv("FDA_CACHE_TTL_SECONDS", "86400"))
+    FAILED_RESULT_ERROR_CODES = {
+        "timeout",
+        "scrape_error",
+        "selector_not_found",
+        "playwright_unavailable",
+    }
 
     _browser: Optional[Browser] = None
     _playwright_context = None
@@ -68,6 +74,21 @@ class FDAVerificationScraper:
             "error_code": error_code,
             "scraped_at": datetime.now().isoformat(),
         }
+
+    @staticmethod
+    def _is_failed_cached_entry(entry: Dict) -> bool:
+        if not isinstance(entry, dict):
+            return True
+
+        error_code = str(entry.get("error_code") or "").strip().lower()
+        if error_code in FDAVerificationScraper.FAILED_RESULT_ERROR_CODES:
+            return True
+
+        return bool(entry.get("error")) and not bool(entry.get("found", False))
+
+    @staticmethod
+    def _is_cacheable_result(entry: Dict) -> bool:
+        return not FDAVerificationScraper._is_failed_cached_entry(entry)
 
     @staticmethod
     async def _get_browser() -> Browser:
@@ -355,8 +376,20 @@ class FDAVerificationScraper:
     async def load_cache() -> List[Dict]:
         """Load cached FDA data from disk."""
         cache = await load_cache(CACHE_PATH, ttl_seconds=FDAVerificationScraper.CACHE_TTL_SECONDS)
-        logger.info(f"Loaded FDA cache with {len(cache)} entries")
-        return cache
+        sanitized_cache = [entry for entry in cache if not FDAVerificationScraper._is_failed_cached_entry(entry)]
+
+        removed_count = len(cache) - len(sanitized_cache)
+        if removed_count > 0:
+            await save_cache(
+                CACHE_PATH,
+                sanitized_cache,
+                key_fn=FDAVerificationScraper._cache_key,
+                ensure_ascii=False,
+            )
+            logger.warning(f"Removed {removed_count} failed FDA cache entries before lookup")
+
+        logger.info(f"Loaded FDA cache with {len(sanitized_cache)} entries")
+        return sanitized_cache
 
     @staticmethod
     async def save_cache(data: List[Dict]) -> None:
@@ -377,7 +410,10 @@ class FDAVerificationScraper:
 
         verified: List[Dict] = [FDAVerificationScraper._base_result(query=name) for name in drug_names]
         cache_dict = {
-            normalize_key(entry.get("query", "")): entry for entry in cache if normalize_key(entry.get("query", ""))
+            normalize_key(entry.get("query", "")): entry
+            for entry in cache
+            if normalize_key(entry.get("query", ""))
+            and not FDAVerificationScraper._is_failed_cached_entry(entry)
         }
         pending: List[Tuple[int, str, str]] = []
 
@@ -422,7 +458,8 @@ class FDAVerificationScraper:
                         )
                     verified[index] = result
 
-                    if normalize_key(result.get("query", "")):
+                    normalized_result_key = normalize_key(result.get("query", ""))
+                    if normalized_result_key and FDAVerificationScraper._is_cacheable_result(result):
                         await upsert_cache_entry(
                             CACHE_PATH,
                             result,
@@ -430,6 +467,10 @@ class FDAVerificationScraper:
                             ensure_ascii=False,
                         )
                         cache_dict[cache_key] = result
+                    elif normalized_result_key:
+                        logger.info(
+                            f"Skipping FDA cache write for {name}: transient error {result.get('error_code')}"
+                        )
 
                     if FDAVerificationScraper.REQUEST_DELAY > 0:
                         await asyncio.sleep(FDAVerificationScraper.REQUEST_DELAY)

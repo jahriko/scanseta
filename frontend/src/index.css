@@ -41,6 +41,9 @@ All colors MUST be HSL.
     --medical-gradient: linear-gradient(135deg, hsl(195 85% 45%), hsl(195 75% 55%));
     --success-gradient: linear-gradient(135deg, hsl(160 75% 45%), hsl(160 65% 55%));
     --card-shadow: 0 4px 20px -2px hsl(195 85% 45% / 0.08);
+    --panel-surface: 210 42% 98.8%;
+    --panel-border-strong: 210 26% 83%;
+    --panel-shadow: 0 18px 45px -30px hsl(212 42% 28% / 0.45);
     --transition-smooth: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
 
     --sidebar-background: 0 0% 98%;
@@ -88,6 +91,9 @@ All colors MUST be HSL.
     --border: 210 20% 25%;
     --input: 210 20% 25%;
     --ring: 195 85% 50%;
+    --panel-surface: 210 23% 15%;
+    --panel-border-strong: 210 18% 30%;
+    --panel-shadow: 0 18px 45px -30px hsl(210 80% 4% / 0.8);
     --sidebar-background: 240 5.9% 10%;
     --sidebar-foreground: 240 4.8% 95.9%;
     --sidebar-primary: 224.3 76.3% 48%;

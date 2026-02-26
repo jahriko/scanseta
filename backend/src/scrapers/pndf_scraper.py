@@ -40,9 +40,9 @@ class PNDFScraper:
     # Request delay (seconds) between searches to respect server
     REQUEST_DELAY = float(os.getenv("PNDF_REQUEST_DELAY_SECONDS", "0.1"))
     LOOKUP_CONCURRENCY = max(1, int(os.getenv("PNDF_LOOKUP_CONCURRENCY", "2")))
-    LOOKUP_TIMEOUT_SECONDS = float(os.getenv("PNDF_LOOKUP_TIMEOUT_SECONDS", "2.0"))
+    LOOKUP_TIMEOUT_SECONDS = float(os.getenv("PNDF_LOOKUP_TIMEOUT_SECONDS", "60"))
     CACHE_TTL_SECONDS = int(os.getenv("PNDF_CACHE_TTL_SECONDS", "0"))
-    NEGATIVE_CACHE_TTL_SECONDS = int(os.getenv("PNDF_NEGATIVE_CACHE_TTL_SECONDS", "900"))
+    NEGATIVE_CACHE_TTL_SECONDS = int(os.getenv("PNDF_NEGATIVE_CACHE_TTL_SECONDS", "180"))
     
     # Shared browser instance (initialized lazily)
     _browser: Optional[Browser] = None

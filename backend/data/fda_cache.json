@@ -1,43 +1,29 @@
 [
   {
-    "query": "test_drug",
-    "found": true,
-    "matches": [
-      {
-        "registration_number": "TEST-1234",
-        "generic_name": "Test Drug",
-        "brand_name": "Test Brand",
-        "dosage_strength": "100 mg",
-        "classification": "Prescription Drug (RX)",
-        "details": {}
-      }
-    ],
-    "best_match": {
-      "registration_number": "TEST-1234",
-      "generic_name": "Test Drug",
-      "brand_name": "Test Brand",
-      "dosage_strength": "100 mg",
-      "classification": "Prescription Drug (RX)",
-      "details": {}
-    },
-    "scraped_at": "2026-01-30T12:00:00"
-  },
-  {
-    "query": "amoxicillin",
+    "query": "PARACETAMOL",
     "found": false,
     "matches": [],
     "best_match": null,
-    "error": "FDA lookup timed out after 0.0s",
-    "error_code": "timeout",
-    "scraped_at": "2026-02-25T06:05:06.597437"
+    "error": null,
+    "error_code": null,
+    "scraped_at": "2026-02-25T22:25:11.909003"
   },
   {
-    "query": "paracetamol",
+    "query": "@ cepalexin 500mg cap",
     "found": false,
     "matches": [],
     "best_match": null,
-    "error": "[WinError 5] Access is denied",
-    "error_code": "scrape_error",
-    "scraped_at": "2026-02-25T00:55:33.984267"
+    "error": null,
+    "error_code": null,
+    "scraped_at": "2026-02-25T22:37:47.847098"
+  },
+  {
+    "query": "gallutamol neb",
+    "found": false,
+    "matches": [],
+    "best_match": null,
+    "error": null,
+    "error_code": null,
+    "scraped_at": "2026-02-26T09:10:03.395757"
   }
 ]
