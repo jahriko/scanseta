@@ -45,9 +45,19 @@ class FDAVerificationScraper:
     FAILED_RESULT_ERROR_CODES = {
         "timeout",
         "scrape_error",
+        "dns_error",
+        "network_error",
         "selector_not_found",
         "playwright_unavailable",
     }
+    NON_FAILURE_RESULT_ERROR_CODES = {"not_found", "recent_miss_cache"}
+    NO_RESULT_PATTERNS = (
+        r"no\s+records?\s+found",
+        r"no\s+results?\s+found",
+        r"no\s+match(?:es)?\s+found",
+        r"0\s+results?",
+        r"0\s+records?",
+    )
 
     _browser: Optional[Browser] = None
     _playwright_context = None
@@ -84,11 +94,34 @@ class FDAVerificationScraper:
         if error_code in FDAVerificationScraper.FAILED_RESULT_ERROR_CODES:
             return True
 
-        return bool(entry.get("error")) and not bool(entry.get("found", False))
+        found = bool(entry.get("found", False))
+        if not found and error_code:
+            return error_code not in FDAVerificationScraper.NON_FAILURE_RESULT_ERROR_CODES
+
+        if not found:
+            # Legacy cache entries with found=False and no error_code are ambiguous
+            # and can poison cache accuracy when selectors drift.
+            return True
+
+        return bool(entry.get("error")) and not found
 
     @staticmethod
     def _is_cacheable_result(entry: Dict) -> bool:
         return not FDAVerificationScraper._is_failed_cached_entry(entry)
+
+    @staticmethod
+    def _classify_runtime_error(error_message: str) -> Tuple[str, str]:
+        if "ERR_NAME_NOT_RESOLVED" in error_message:
+            return (
+                "dns_error",
+                f"Could not resolve {FDA_BASE_URL} while running FDA lookup",
+            )
+        if "net::" in error_message:
+            return (
+                "network_error",
+                "Network error while connecting to the FDA portal",
+            )
+        return ("scrape_error", error_message)
 
     @staticmethod
     async def _get_browser() -> Browser:
@@ -148,43 +181,59 @@ class FDAVerificationScraper:
             await page.goto(FDA_BASE_URL, wait_until="networkidle", timeout=30000)
             await page.wait_for_timeout(800)
 
-            search_input = page.locator('input[placeholder*="Type or Press mic icon"]')
-            try:
-                await search_input.wait_for(state="visible", timeout=10000)
-            except PlaywrightTimeoutError:
+            search_input = await FDAVerificationScraper._find_search_input(page)
+            if search_input is None:
                 return FDAVerificationScraper._base_result(
                     query=drug_name,
                     error="Search input selector not found",
                     error_code="selector_not_found",
                 )
 
+            await search_input.click(timeout=5000, force=True)
             await search_input.fill("")
             await search_input.fill(drug_name)
+            typed_value = (await search_input.input_value()).strip()
+            if typed_value.lower() != drug_name.strip().lower():
+                await search_input.type(drug_name, delay=25)
+                typed_value = (await search_input.input_value()).strip()
+            if typed_value.lower() != drug_name.strip().lower():
+                return FDAVerificationScraper._base_result(
+                    query=drug_name,
+                    error=f"FDA search field rejected query: {typed_value}",
+                    error_code="selector_not_found",
+                )
+
             await page.wait_for_timeout(150)
+            await FDAVerificationScraper._submit_search(page, search_input)
 
-            search_button = page.locator('button[title="Search"]')
-            if await search_button.is_visible(timeout=2000):
-                await search_button.click()
-            else:
-                await search_input.press("Enter")
-
+            try:
+                await page.wait_for_load_state("networkidle", timeout=10000)
+            except PlaywrightTimeoutError:
+                logger.debug("networkidle timeout after FDA search; continuing")
             await page.wait_for_timeout(1200)
 
-            table = page.locator("table.w-full.border-collapse")
-            if not await table.is_visible(timeout=5000):
-                logger.info(f"No results table found for {drug_name}")
-                return FDAVerificationScraper._base_result(query=drug_name, found=False)
-
             matches = await FDAVerificationScraper._parse_results_table(page)
-            if not matches:
-                return FDAVerificationScraper._base_result(query=drug_name, found=False)
+            if matches:
+                best_match = FDAVerificationScraper._select_best_match(drug_name, matches)
+                return FDAVerificationScraper._base_result(
+                    query=drug_name,
+                    found=True,
+                    matches=matches,
+                    best_match=best_match,
+                )
 
-            best_match = FDAVerificationScraper._select_best_match(drug_name, matches)
+            if await FDAVerificationScraper._has_explicit_no_results(page):
+                return FDAVerificationScraper._base_result(
+                    query=drug_name,
+                    found=False,
+                    error_code="not_found",
+                )
+
             return FDAVerificationScraper._base_result(
                 query=drug_name,
-                found=True,
-                matches=matches,
-                best_match=best_match,
+                found=False,
+                error="Results table not found after search",
+                error_code="selector_not_found",
             )
 
         except PlaywrightTimeoutError as e:
@@ -195,11 +244,12 @@ class FDAVerificationScraper:
                 error_code="timeout",
             )
         except Exception as e:
+            error_code, error_message = FDAVerificationScraper._classify_runtime_error(str(e))
             logger.error(f"Error searching FDA for {drug_name}: {e}")
             return FDAVerificationScraper._base_result(
                 query=drug_name,
-                error=str(e),
-                error_code="scrape_error",
+                error=error_message,
+                error_code=error_code,
             )
         finally:
             if page:
@@ -254,7 +304,70 @@ class FDAVerificationScraper:
         except Exception as e:
             logger.error(f"Error parsing results table: {e}")
 
+        if matches:
+            return matches
+
+        try:
+            html_content = await page.content()
+            return FDAVerificationScraper.parse_results_table_html(html_content)
+        except Exception as e:
+            logger.debug(f"HTML fallback parser failed: {e}")
         return matches
+
+    @staticmethod
+    async def _find_search_input(page: Page):
+        selectors = [
+            'input[placeholder*="Type or Press mic icon"]',
+            'input[placeholder*="Type or press mic icon"]',
+            'input[placeholder*="Search"]',
+            'input[aria-label*="Search"]',
+            'input[type="search"]',
+            'input[name*="search"]',
+        ]
+
+        for selector in selectors:
+            locator = page.locator(selector)
+            count = await locator.count()
+            if count == 0:
+                continue
+
+            for idx in range(min(count, 4)):
+                candidate = locator.nth(idx)
+                try:
+                    if await candidate.is_visible():
+                        return candidate
+                except Exception:
+                    continue
+        return None
+
+    @staticmethod
+    async def _submit_search(page: Page, search_input) -> None:
+        button_selectors = [
+            'button[title="Search"]',
+            'button[aria-label*="Search"]',
+            'button:has-text("Search")',
+        ]
+        for selector in button_selectors:
+            button = page.locator(selector).first
+            try:
+                if await button.count() > 0 and await button.is_visible(timeout=1000):
+                    await button.click(timeout=5000)
+                    return
+            except Exception:
+                continue
+        await search_input.press("Enter")
+
+    @staticmethod
+    async def _has_explicit_no_results(page: Page) -> bool:
+        try:
+            body_text = (await page.locator("body").inner_text()).lower()
+        except Exception:
+            return False
+
+        for pattern in FDAVerificationScraper.NO_RESULT_PATTERNS:
+            if re.search(pattern, body_text):
+                return True
+        return False
 
     @staticmethod
     async def _parse_details_for_row(row) -> Dict:
@@ -290,32 +403,35 @@ class FDAVerificationScraper:
     def parse_results_table_html(html: str) -> List[Dict]:
         """Fixture-friendly parser for FDA table HTML."""
         soup = BeautifulSoup(html, "lxml")
-        rows = soup.select("table tbody tr")
-        matches: List[Dict] = []
+        all_tables = soup.select("table")
+        best_matches: List[Dict] = []
 
-        i = 0
-        while i < len(rows):
-            row = rows[i]
-            row_classes = " ".join(row.get("class", []))
-            if "bg-gray-50" in row_classes:
-                i += 1
-                continue
+        for table in all_tables:
+            rows = table.select("tbody tr")
+            table_matches: List[Dict] = []
 
-            cells = row.find_all("td")
-            if len(cells) < 5:
-                i += 1
-                continue
-
-            details = {}
-            if i + 1 < len(rows):
-                next_row = rows[i + 1]
-                next_classes = " ".join(next_row.get("class", []))
-                if "bg-gray-50" in next_classes:
-                    details = FDAVerificationScraper._parse_details_html_row(next_row)
+            i = 0
+            while i < len(rows):
+                row = rows[i]
+                row_classes = " ".join(row.get("class", []))
+                if "bg-gray-50" in row_classes:
                     i += 1
+                    continue
 
-            matches.append(
-                {
+                cells = row.find_all("td")
+                if len(cells) < 5:
+                    i += 1
+                    continue
+
+                details = {}
+                if i + 1 < len(rows):
+                    next_row = rows[i + 1]
+                    next_classes = " ".join(next_row.get("class", []))
+                    if "bg-gray-50" in next_classes:
+                        details = FDAVerificationScraper._parse_details_html_row(next_row)
+                        i += 1
+
+                parsed = {
                     "registration_number": cells[0].get_text(strip=True),
                     "generic_name": cells[1].get_text(strip=True),
                     "brand_name": cells[2].get_text(strip=True),
@@ -323,10 +439,17 @@ class FDAVerificationScraper:
                     "classification": cells[4].get_text(strip=True),
                     "details": details,
                 }
-            )
-            i += 1
+                if not any([parsed["registration_number"], parsed["generic_name"], parsed["brand_name"]]):
+                    i += 1
+                    continue
 
-        return matches
+                table_matches.append(parsed)
+                i += 1
+
+            if len(table_matches) > len(best_matches):
+                best_matches = table_matches
+
+        return best_matches
 
     @staticmethod
     def _parse_details_html_row(details_row) -> Dict:

@@ -64,6 +64,28 @@ class TestScraperTimeouts(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(results[0].get("error_code"), "timeout")
         self.assertFalse(results[0].get("found"))
 
+    async def test_pndf_enrich_medications_preserves_network_errors(self):
+        async def dns_error_search(name: str):
+            return {
+                "name": name,
+                "found": False,
+                "message": "Could not resolve https://pnf.doh.gov.ph",
+                "error": "net::ERR_NAME_NOT_RESOLVED at https://pnf.doh.gov.ph/",
+                "error_code": "dns_error",
+            }
+
+        PNDFScraper.search_drug = staticmethod(dns_error_search)  # type: ignore[method-assign]
+        PNDFScraper.LOOKUP_TIMEOUT_SECONDS = 5
+        PNDFScraper.REQUEST_DELAY = 0
+        PNDFScraper.NEGATIVE_CACHE_TTL_SECONDS = 60
+
+        first = await PNDFScraper.enrich_medications(["amoxicillin"], cache=[])
+        second = await PNDFScraper.enrich_medications(["amoxicillin"], cache=[])
+
+        self.assertEqual(first[0].get("error_code"), "dns_error")
+        self.assertIn("resolve", str(first[0].get("message")).lower())
+        self.assertEqual(second[0].get("error_code"), "recent_miss_cache")
+
 
 if __name__ == "__main__":
     unittest.main()

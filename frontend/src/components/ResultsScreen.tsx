@@ -151,11 +151,14 @@ const getSourceStateLabel = (
   errorCode: string | null | undefined,
   sourceName: "FDA" | "PNDF",
 ): string => {
+  const normalizedErrorCode = normalizeStatus(errorCode);
+  const isNonFailureMissCode = normalizedErrorCode === "not_found" || normalizedErrorCode === "recent_miss_cache";
+
   if (hasItem) {
-    if (errorCode === "timeout") {
+    if (normalizedErrorCode === "timeout") {
       return "Timed out";
     }
-    if (errorCode === "scrape_error") {
+    if (normalizedErrorCode && !isNonFailureMissCode) {
       return "Failed";
     }
     if (found) {
@@ -514,7 +517,7 @@ const ResultsScreen = ({ onScanAnother, scanResults }: ResultsScreenProps) => {
                               {fdaBestMatch?.classification && <DetailRow label="Class" value={fdaBestMatch.classification} />}
                               {fdaBestMatch?.registration_number && <DetailRow label="Reg." value={fdaBestMatch.registration_number} />}
                               {item.fda.error && <p className="text-sm text-destructive">{item.fda.error}</p>}
-                              {!fdaBestMatch?.generic_name && !fdaBestMatch?.brand_name && !fdaBestMatch?.classification && !fdaBestMatch?.registration_number && (
+                              {!fdaBestMatch?.generic_name && !fdaBestMatch?.brand_name && !fdaBestMatch?.classification && !fdaBestMatch?.registration_number && !item.fda.error && !item.fda.error_code && (
                                 <p className="rounded-md border border-dashed border-border bg-card/60 px-2.5 py-2 text-sm text-muted-foreground">
                                   {getSourceMissingMessage(fdaEnrichmentStatus, "FDA")}
                                 </p>
@@ -559,7 +562,7 @@ const ResultsScreen = ({ onScanAnother, scanResults }: ResultsScreenProps) => {
 
                       {patientSummary.sections.length > 0 && (
                         <div className="mt-3 rounded-lg border bg-card/70 p-3.5">
-                          <p className="mb-2 text-xs font-semibold uppercase tracking-[0.08em] text-muted-foreground">Patient Summary</p>
+                          <p className="mb-2 text-xs font-semibold uppercase tracking-[0.08em] text-muted-foreground">Medication Summary</p>
                           <div className="grid gap-2 md:grid-cols-2">
                             {patientSummary.sections.map((summarySection) => (
                               <div key={`${item.name}-${summarySection.title}`} className="rounded-md bg-muted/25 px-2.5 py-2">

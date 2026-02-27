@@ -1035,6 +1035,33 @@ def _enrichment_status_from_sources(fda_status: str, pndf_status: str) -> str:
     return "running"
 
 
+def _derive_source_status_from_results(results: List[Dict[str, Any]]) -> Tuple[str, str]:
+    if not results:
+        return "completed", ""
+
+    non_failure_codes = {"not_found", "recent_miss_cache"}
+    failed_items = []
+    for item in results:
+        if not isinstance(item, dict):
+            continue
+        error_code = str(item.get("error_code") or "").strip().lower()
+        if error_code and error_code not in non_failure_codes:
+            failed_items.append(item)
+
+    if not failed_items or len(failed_items) != len(results):
+        return "completed", ""
+
+    error_codes = {str(item.get("error_code") or "").strip().lower() for item in failed_items}
+    first_error = str(
+        failed_items[0].get("error")
+        or failed_items[0].get("message")
+        or ""
+    ).strip()
+    if error_codes == {"timeout"}:
+        return "timed_out", first_error or "Validation timed out before a result was returned"
+    return "failed", first_error or "Validation failed due to source or network errors"
+
+
 async def _execute_fda_lookup(drug_names: List[str]) -> Dict[str, Any]:
     try:
         lookup_task = asyncio.create_task(FDAVerificationScraper.verify_medications(drug_names))
@@ -1043,10 +1070,12 @@ async def _execute_fda_lookup(drug_names: List[str]) -> Dict[str, Any]:
             lookup_task.cancel()
             raise asyncio.TimeoutError
         raw_results = lookup_task.result()
+        results = [_model_dump_compat(_to_fda_item(item)) for item in raw_results]
+        status, error = _derive_source_status_from_results(results)
         return {
-            "status": "completed",
-            "results": [_model_dump_compat(_to_fda_item(item)) for item in raw_results],
-            "error": "",
+            "status": status,
+            "results": results,
+            "error": error,
         }
     except asyncio.TimeoutError:
         reason = f"FDA validation timed out after {ENRICHMENT_FDA_TIMEOUT_SECONDS:.1f}s"
@@ -1073,10 +1102,12 @@ async def _execute_pndf_lookup(drug_names: List[str]) -> Dict[str, Any]:
             lookup_task.cancel()
             raise asyncio.TimeoutError
         raw_results = lookup_task.result()
+        results = [_model_dump_compat(_to_pndf_item(item)) for item in raw_results]
+        status, error = _derive_source_status_from_results(results)
         return {
-            "status": "completed",
-            "results": [_model_dump_compat(_to_pndf_item(item)) for item in raw_results],
-            "error": "",
+            "status": status,
+            "results": results,
+            "error": error,
         }
     except asyncio.TimeoutError:
         reason = f"PNDF validation timed out after {ENRICHMENT_PNDF_TIMEOUT_SECONDS:.1f}s"

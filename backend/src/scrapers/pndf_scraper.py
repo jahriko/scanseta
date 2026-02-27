@@ -50,6 +50,23 @@ class PNDFScraper:
     _negative_cache: Dict[str, datetime] = {}
 
     @staticmethod
+    def _error_result(
+        drug_name: str,
+        *,
+        error: str,
+        error_code: str,
+        message: Optional[str] = None,
+    ) -> Dict:
+        return {
+            "name": drug_name,
+            "found": False,
+            "message": message or error,
+            "error": error,
+            "error_code": error_code,
+            "scraped_at": datetime.now().isoformat(),
+        }
+
+    @staticmethod
     def _cache_key(entry: Dict) -> Optional[str]:
         return entry.get("name")
 
@@ -233,7 +250,12 @@ class PNDFScraper:
         """
         if not PLAYWRIGHT_AVAILABLE:
             logger.error("Playwright not available. Install with: pip install playwright && playwright install chromium")
-            return None
+            return PNDFScraper._error_result(
+                drug_name,
+                error="Playwright not available",
+                error_code="playwright_unavailable",
+                message="Scraper runtime unavailable",
+            )
 
         page = None
         context = None
@@ -289,7 +311,13 @@ class PNDFScraper:
                                 f"Failed to resolve DNS or connect to {PNDF_BASE_URL} after {max_retries} attempts. "
                                 f"Error: {error_msg}. Please check your internet connection and verify the site is accessible."
                             )
-                            return None
+                            error_code = "dns_error" if "ERR_NAME_NOT_RESOLVED" in error_msg else "network_error"
+                            return PNDFScraper._error_result(
+                                drug_name,
+                                error=error_msg,
+                                error_code=error_code,
+                                message=f"Could not connect to PNDF portal ({PNDF_BASE_URL})",
+                            )
                     else:
                         # For non-network errors, don't retry
                         logger.error(f"Navigation error: {error_msg}")
@@ -297,7 +325,11 @@ class PNDFScraper:
             
             if not navigation_success:
                 logger.error(f"Failed to navigate to {PNDF_BASE_URL} after {max_retries} attempts")
-                return None
+                return PNDFScraper._error_result(
+                    drug_name,
+                    error=f"Failed to navigate to {PNDF_BASE_URL}",
+                    error_code="network_error",
+                )
             
             # Wait a bit for page to fully load
             await page.wait_for_timeout(2000)
@@ -322,7 +354,12 @@ class PNDFScraper:
                     page_title = await page.title()
                     if "Cloudflare" in page_title or "Attention Required" in page_title:
                         logger.error("Still blocked by Cloudflare. Consider running with headless=False for manual challenge completion.")
-                        return None
+                        return PNDFScraper._error_result(
+                            drug_name,
+                            error="Blocked by Cloudflare challenge",
+                            error_code="cloudflare_blocked",
+                            message="PNDF access is blocked by Cloudflare challenge",
+                        )
                 except Exception as e:
                     logger.warning(f"Error waiting for Cloudflare challenge: {e}")
             
@@ -355,11 +392,19 @@ class PNDFScraper:
                     logger.info("Found search input by placeholder text")
                 except PlaywrightTimeoutError:
                     logger.error("Could not find search input by ID or placeholder")
-                    return None
+                    return PNDFScraper._error_result(
+                        drug_name,
+                        error="PNDF search input not found",
+                        error_code="selector_not_found",
+                    )
 
             if search_input_locator is None:
                 logger.error("Search input locator is None, cannot proceed")
-                return None
+                return PNDFScraper._error_result(
+                    drug_name,
+                    error="PNDF search input locator unavailable",
+                    error_code="selector_not_found",
+                )
 
             search_input = search_input_locator
 
@@ -383,7 +428,12 @@ class PNDFScraper:
                 logger.error(
                     f"Search input did not accept query reliably. Expected '{drug_name}', got '{typed_value}'"
                 )
-                return None
+                return PNDFScraper._error_result(
+                    drug_name,
+                    error=f"PNDF search input rejected query: {typed_value}",
+                    error_code="selector_not_found",
+                    message="PNDF search field did not accept the medication query",
+                )
 
             await page.wait_for_timeout(200)
 
@@ -476,7 +526,12 @@ class PNDFScraper:
 
         except PlaywrightTimeoutError as e:
             logger.error(f"Timeout error searching for {drug_name}: {e}")
-            return None
+            return PNDFScraper._error_result(
+                drug_name,
+                error=str(e),
+                error_code="timeout",
+                message="PNDF page interaction timed out",
+            )
         except Exception as e:
             error_msg = str(e)
             # Provide more helpful error messages for common network issues
@@ -486,14 +541,30 @@ class PNDFScraper:
                     f"This could indicate: network connectivity issues, DNS problems, or the site may be down. "
                     f"Error: {error_msg}"
                 )
+                return PNDFScraper._error_result(
+                    drug_name,
+                    error=error_msg,
+                    error_code="dns_error",
+                    message=f"Could not resolve {PNDF_BASE_URL}",
+                )
             elif "net::" in error_msg:
                 logger.error(
                     f"Network error while searching for {drug_name}: {error_msg}. "
                     f"Please check your internet connection and try again."
                 )
+                return PNDFScraper._error_result(
+                    drug_name,
+                    error=error_msg,
+                    error_code="network_error",
+                    message="Network error while reaching PNDF portal",
+                )
             else:
                 logger.error(f"Error searching for {drug_name}: {error_msg}")
-            return None
+                return PNDFScraper._error_result(
+                    drug_name,
+                    error=error_msg,
+                    error_code="scrape_error",
+                )
         finally:
             # Always close the page and context to free resources
             if page:
@@ -723,7 +794,21 @@ class PNDFScraper:
                             drug_info = search_task.result()
                         else:
                             drug_info = await PNDFScraper.search_drug(drug_name)
-                        if drug_info:
+                        if drug_info and (drug_info.get("error_code") or drug_info.get("error")):
+                            PNDFScraper._remember_negative_lookup(drug_name_key)
+                            enriched[index] = {
+                                "name": str(drug_info.get("name") or drug_name),
+                                "found": False,
+                                "message": str(
+                                    drug_info.get("message")
+                                    or drug_info.get("error")
+                                    or "PNDF lookup failed"
+                                ),
+                                "error": drug_info.get("error"),
+                                "error_code": str(drug_info.get("error_code") or "scrape_error"),
+                                "scraped_at": str(drug_info.get("scraped_at") or datetime.now().isoformat()),
+                            }
+                        elif drug_info:
                             enriched[index] = drug_info
                             await upsert_cache_entry(
                                 CACHE_PATH,

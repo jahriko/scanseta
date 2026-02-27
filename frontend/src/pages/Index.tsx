@@ -118,6 +118,15 @@ const getRightPanelMeta = (
   };
 };
 
+const StickyHeader = () => (
+  <header className="sticky top-0 z-50 border-b border-border bg-background/95 backdrop-blur">
+    <div className="mx-auto w-full max-w-7xl px-4 py-3 md:px-6">
+      <h1 className="text-3xl font-semibold tracking-tight text-foreground">Scanseta</h1>
+      <p className="text-gray-500 text-base">AI Prescription Scanner</p>
+    </div>
+  </header>
+);
+
 const Index = () => {
   const [appState, setAppState] = useState<AppState>("upload");
   const [imagePreview, setImagePreview] = useState<string>("");
@@ -598,308 +607,314 @@ const Index = () => {
 
   if (appState === "upload") {
     return (
-      <div className="min-h-screen bg-background flex items-center justify-center p-4">
-        <Card className="w-full max-w-2xl p-8 md:p-12 border shadow-sm">
-          <div className="text-center space-y-6">
-            <div className="inline-flex p-4 rounded-2xl bg-muted mb-4">
-              {isCheckingHealth ? (
-                <Loader2 className="w-12 h-12 text-primary animate-spin" />
-              ) : (
-                <Scan className="w-12 h-12 text-primary" />
+      <div className="min-h-screen bg-background flex flex-col">
+        <StickyHeader />
+        <div className="flex flex-1 items-center justify-center p-4">
+          <Card className="w-full max-w-2xl p-8 md:p-12 border shadow-sm">
+            <div className="text-center space-y-6">
+              <div className="inline-flex p-4 rounded-2xl bg-muted mb-4">
+                {isCheckingHealth ? (
+                  <Loader2 className="w-12 h-12 text-primary animate-spin" />
+                ) : (
+                  <Scan className="w-12 h-12 text-primary" />
+                )}
+              </div>
+
+              <div>
+                <h1 className="text-4xl md:text-5xl font-bold text-foreground mb-3">
+                  Scanseta
+                </h1>
+                <p className="text-muted-foreground text-lg">
+                  Upload or capture your medical prescription to extract medication information
+                </p>
+              </div>
+
+              {!configValid && !isCheckingHealth && (
+                <div className="bg-destructive/10 border border-destructive/20 rounded-lg p-4 flex items-start gap-3">
+                  <AlertCircle className="w-5 h-5 text-destructive flex-shrink-0 mt-0.5" />
+                  <div className="text-left flex-1">
+                    <p className="text-sm font-semibold text-destructive mb-1">Configuration Error</p>
+                    <p className="text-sm text-destructive/90 mb-2">
+                      Backend API URL is not configured. Please set the <code className="bg-destructive/10 px-1 py-0.5 rounded text-xs">VITE_API_BASE_URL</code> environment variable.
+                    </p>
+                    <p className="text-xs text-destructive/80">
+                      Current API URL: <code className="bg-destructive/10 px-1 py-0.5 rounded">{config.apiBaseUrl || "(not set)"}</code>
+                    </p>
+                  </div>
+                </div>
               )}
-            </div>
 
-            <div>
-              <h1 className="text-4xl md:text-5xl font-bold text-foreground mb-3">
-                Scanseta
-              </h1>
-              <p className="text-muted-foreground text-lg">
-                Upload or capture your medical prescription to extract medication information
-              </p>
-            </div>
-
-            {!configValid && !isCheckingHealth && (
-              <div className="bg-destructive/10 border border-destructive/20 rounded-lg p-4 flex items-start gap-3">
-                <AlertCircle className="w-5 h-5 text-destructive flex-shrink-0 mt-0.5" />
-                <div className="text-left flex-1">
-                  <p className="text-sm font-semibold text-destructive mb-1">Configuration Error</p>
-                  <p className="text-sm text-destructive/90 mb-2">
-                    Backend API URL is not configured. Please set the <code className="bg-destructive/10 px-1 py-0.5 rounded text-xs">VITE_API_BASE_URL</code> environment variable.
-                  </p>
-                  <p className="text-xs text-destructive/80">
-                    Current API URL: <code className="bg-destructive/10 px-1 py-0.5 rounded">{config.apiBaseUrl || "(not set)"}</code>
-                  </p>
+              {configValid && !isModelLoaded && !isCheckingHealth && (
+                <div className="bg-accent/10 border border-accent/20 rounded-lg p-4 flex items-start gap-3">
+                  <AlertCircle className="w-5 h-5 text-accent flex-shrink-0 mt-0.5" />
+                  <div className="text-left flex-1">
+                    <p className="text-sm font-semibold text-accent mb-1">Model Not Loaded</p>
+                    <p className="text-sm text-accent/90 mb-3">
+                      The AI model needs to be loaded before you can scan prescriptions.
+                    </p>
+                    <Button
+                      onClick={handleLoadModel}
+                      disabled={isLoadingModel}
+                      size="sm"
+                      className="bg-accent hover:bg-accent/90"
+                    >
+                      {isLoadingModel ? (
+                        <>
+                          <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                          Loading Model...
+                        </>
+                      ) : (
+                        "Load Model"
+                      )}
+                    </Button>
+                  </div>
                 </div>
-              </div>
-            )}
+              )}
 
-            {configValid && !isModelLoaded && !isCheckingHealth && (
-              <div className="bg-accent/10 border border-accent/20 rounded-lg p-4 flex items-start gap-3">
-                <AlertCircle className="w-5 h-5 text-accent flex-shrink-0 mt-0.5" />
-                <div className="text-left flex-1">
-                  <p className="text-sm font-semibold text-accent mb-1">Model Not Loaded</p>
-                  <p className="text-sm text-accent/90 mb-3">
-                    The AI model needs to be loaded before you can scan prescriptions.
-                  </p>
+              <div className="grid gap-4 pt-8">
+                <label htmlFor="file-upload" className={!isModelLoaded || isCheckingHealth || !configValid ? "cursor-not-allowed" : "cursor-pointer"}>
+                  <input
+                    id="file-upload"
+                    type="file"
+                    accept="image/*"
+                    onChange={handleFileChange}
+                    className="hidden"
+                    disabled={!isModelLoaded || isCheckingHealth || !configValid}
+                  />
                   <Button
-                    onClick={handleLoadModel}
-                    disabled={isLoadingModel}
-                    size="sm"
-                    className="bg-accent hover:bg-accent/90"
+                    size="lg"
+                    className="w-full h-14 text-base"
+                    disabled={!isModelLoaded || isCheckingHealth || !configValid}
+                    asChild
                   >
-                    {isLoadingModel ? (
-                      <>
-                        <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                        Loading Model...
-                      </>
-                    ) : (
-                      "Load Model"
-                    )}
+                    <span>
+                      <Upload className="mr-2 h-5 w-5" />
+                      Upload Prescription Image
+                    </span>
                   </Button>
-                </div>
-              </div>
-            )}
+                </label>
 
-            <div className="grid gap-4 pt-8">
-              <label htmlFor="file-upload" className={!isModelLoaded || isCheckingHealth || !configValid ? "cursor-not-allowed" : "cursor-pointer"}>
                 <input
-                  id="file-upload"
+                  id="camera-capture"
+                  ref={cameraInputRef}
                   type="file"
                   accept="image/*"
+                  capture="environment"
                   onChange={handleFileChange}
                   className="hidden"
                   disabled={!isModelLoaded || isCheckingHealth || !configValid}
                 />
                 <Button
+                  variant="secondary"
                   size="lg"
                   className="w-full h-14 text-base"
-                  disabled={!isModelLoaded || isCheckingHealth || !configValid}
-                  asChild
+                  disabled={!isModelLoaded || isCheckingHealth || !configValid || isStartingCamera}
+                  onClick={handleOpenCameraCapture}
                 >
-                  <span>
-                    <Upload className="mr-2 h-5 w-5" />
-                    Upload Prescription Image
-                  </span>
+                  {isStartingCamera ? (
+                    <>
+                      <Loader2 className="mr-2 h-5 w-5 animate-spin" />
+                      Opening Camera...
+                    </>
+                  ) : (
+                    <>
+                      <Camera className="mr-2 h-5 w-5" />
+                      Capture with Camera
+                    </>
+                  )}
                 </Button>
-              </label>
-
-              <input
-                id="camera-capture"
-                ref={cameraInputRef}
-                type="file"
-                accept="image/*"
-                capture="environment"
-                onChange={handleFileChange}
-                className="hidden"
-                disabled={!isModelLoaded || isCheckingHealth || !configValid}
-              />
-              <Button
-                variant="secondary"
-                size="lg"
-                className="w-full h-14 text-base"
-                disabled={!isModelLoaded || isCheckingHealth || !configValid || isStartingCamera}
-                onClick={handleOpenCameraCapture}
-              >
-                {isStartingCamera ? (
-                  <>
-                    <Loader2 className="mr-2 h-5 w-5 animate-spin" />
-                    Opening Camera...
-                  </>
-                ) : (
-                  <>
-                    <Camera className="mr-2 h-5 w-5" />
-                    Capture with Camera
-                  </>
+                {cameraError && (
+                  <p className="text-xs text-amber-700">{cameraError}</p>
                 )}
-              </Button>
-              {cameraError && (
-                <p className="text-xs text-amber-700">{cameraError}</p>
-              )}
-              {isCameraOpen && (
-                <div className="rounded-xl border border-border bg-card p-3 space-y-3">
-                  <video
-                    ref={videoRef}
-                    className="w-full max-h-[50vh] rounded-lg bg-muted object-cover"
-                    playsInline
-                    muted
-                    autoPlay
-                  />
-                  <div className="flex gap-3">
-                    <Button className="flex-1" onClick={handleCameraPhotoCapture}>
-                      Take Photo
-                    </Button>
-                    <Button variant="outline" className="flex-1" onClick={closeCameraCapture}>
-                      Cancel
-                    </Button>
-                  </div>
-                </div>
-              )}
-            </div>
-
-            <div className="pt-2">
-              <p className="text-sm font-medium text-foreground mb-3">Demo prescriptions</p>
-              <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-                {demoPrescriptionImages.map((fileName) => (
-                  <button
-                    key={fileName}
-                    type="button"
-                    className="group relative rounded-lg overflow-hidden border bg-muted/30 disabled:opacity-50 disabled:cursor-not-allowed"
-                    onClick={() => handleDemoImageSelect(fileName)}
-                    disabled={!isModelLoaded || isCheckingHealth || !configValid || isSelectingDemo}
-                  >
-                    <img
-                      src={`/demo-prescriptions/${fileName}`}
-                      alt={`Demo ${fileName}`}
-                      className="h-24 w-full object-cover transition-transform duration-200 group-hover:scale-[1.03]"
-                      loading="lazy"
+                {isCameraOpen && (
+                  <div className="rounded-xl border border-border bg-card p-3 space-y-3">
+                    <video
+                      ref={videoRef}
+                      className="w-full max-h-[50vh] rounded-lg bg-muted object-cover"
+                      playsInline
+                      muted
+                      autoPlay
                     />
-                    <span className="absolute inset-x-0 bottom-0 bg-black/60 text-white text-[11px] px-2 py-1 truncate">
-                      {fileName}
-                    </span>
-                  </button>
-                ))}
+                    <div className="flex gap-3">
+                      <Button className="flex-1" onClick={handleCameraPhotoCapture}>
+                        Take Photo
+                      </Button>
+                      <Button variant="outline" className="flex-1" onClick={closeCameraCapture}>
+                        Cancel
+                      </Button>
+                    </div>
+                  </div>
+                )}
               </div>
-              {isSelectingDemo && (
-                <p className="mt-3 text-xs text-muted-foreground flex items-center justify-center gap-1.5">
-                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                  Loading demo image...
-                </p>
-              )}
-            </div>
 
-            <div className="pt-6 border-t border-border mt-8">
-              <p className="text-sm text-muted-foreground">
-                Supported formats: JPG, PNG, HEIC | Maximum file size: 10MB
-              </p>
+              <div className="pt-2">
+                <p className="text-sm font-medium text-foreground mb-3">Demo prescriptions</p>
+                <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+                  {demoPrescriptionImages.map((fileName) => (
+                    <button
+                      key={fileName}
+                      type="button"
+                      className="group relative rounded-lg overflow-hidden border bg-muted/30 disabled:opacity-50 disabled:cursor-not-allowed"
+                      onClick={() => handleDemoImageSelect(fileName)}
+                      disabled={!isModelLoaded || isCheckingHealth || !configValid || isSelectingDemo}
+                    >
+                      <img
+                        src={`/demo-prescriptions/${fileName}`}
+                        alt={`Demo ${fileName}`}
+                        className="h-24 w-full object-cover transition-transform duration-200 group-hover:scale-[1.03]"
+                        loading="lazy"
+                      />
+                      <span className="absolute inset-x-0 bottom-0 bg-black/60 text-white text-[11px] px-2 py-1 truncate">
+                        {fileName}
+                      </span>
+                    </button>
+                  ))}
+                </div>
+                {isSelectingDemo && (
+                  <p className="mt-3 text-xs text-muted-foreground flex items-center justify-center gap-1.5">
+                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                    Loading demo image...
+                  </p>
+                )}
+              </div>
+
+              <div className="pt-6 border-t border-border mt-8">
+                <p className="text-sm text-muted-foreground">
+                  Supported formats: JPG, PNG, HEIC | Maximum file size: 10MB
+                </p>
+              </div>
             </div>
-          </div>
-        </Card>
+          </Card>
+        </div>
       </div>
     );
   }
 
   return (
-    <div className="min-h-screen bg-background p-4 md:p-6">
-      <div className="mx-auto max-w-7xl h-[calc(100vh-2rem)] md:h-[calc(100vh-3rem)]">
-        <motion.div
-          initial={{ opacity: 0, y: 8 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.25, ease: "easeOut" }}
-          className="grid h-full gap-4 lg:grid-cols-[1.15fr_0.85fr]"
-        >
-          <Card className="p-4 md:p-5 border shadow-sm overflow-hidden">
-            <div className="flex h-full flex-col gap-4">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <ImageIcon className="h-4 w-4 text-primary" />
-                  <h2 className="text-sm font-semibold text-foreground">Image Preview</h2>
+    <div className="min-h-screen bg-background flex flex-col">
+      <StickyHeader />
+      <div className="flex-1 p-4 md:p-6">
+        <div className="mx-auto max-w-7xl h-full">
+          <motion.div
+            initial={{ opacity: 0, y: 8 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.25, ease: "easeOut" }}
+            className="grid h-full gap-4 lg:grid-cols-[1.15fr_0.85fr]"
+          >
+            <Card className="p-4 md:p-5 border shadow-sm overflow-hidden">
+              <div className="flex h-full flex-col gap-4">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <ImageIcon className="h-4 w-4 text-primary" />
+                    <h2 className="text-sm font-semibold text-foreground">Image Preview</h2>
+                  </div>
+                  <Button variant="outline" size="sm" onClick={handleScanAnother}>
+                    Scan Another
+                  </Button>
                 </div>
-                <Button variant="outline" size="sm" onClick={handleScanAnother}>
-                  Scan Another
-                </Button>
-              </div>
-              <div className="flex-1 rounded-lg border bg-muted/30 overflow-hidden">
-                {imagePreview ? (
-                  <img
-                    src={imagePreview}
-                    alt="Prescription preview"
-                    className="h-full w-full object-contain"
-                  />
-                ) : (
-                  <div className="h-full w-full grid place-items-center text-sm text-muted-foreground">
-                    No image selected.
-                  </div>
-                )}
-              </div>
-            </div>
-          </Card>
-
-          <Card className="border-[hsl(var(--panel-border-strong))] bg-[hsl(var(--panel-surface))] p-4 shadow-[var(--panel-shadow)] md:p-5">
-            <div className="flex h-full min-h-0 flex-col gap-4">
-              <div className="rounded-xl border bg-card/80 px-4 py-3">
-                <div className="flex items-start justify-between gap-3">
-                  <div className="space-y-1">
-                    <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">Analysis Workspace</p>
-                    <h2 className="text-base font-semibold leading-tight text-foreground">{rightPanelMeta.title}</h2>
-                    <p className="text-xs text-muted-foreground">{rightPanelMeta.subtitle}</p>
-                  </div>
-                  <span className={`inline-flex shrink-0 items-center rounded-full border px-2.5 py-1 text-[11px] font-semibold ${rightPanelMeta.statusClassName}`}>
-                    {rightPanelMeta.statusLabel}
-                  </span>
+                <div className="flex-1 rounded-lg border bg-muted/30 overflow-hidden">
+                  {imagePreview ? (
+                    <img
+                      src={imagePreview}
+                      alt="Prescription preview"
+                      className="h-full w-full object-contain"
+                    />
+                  ) : (
+                    <div className="h-full w-full grid place-items-center text-sm text-muted-foreground">
+                      No image selected.
+                    </div>
+                  )}
                 </div>
               </div>
+            </Card>
 
-              <div className="min-h-0 flex-1 overflow-y-auto pr-1">
-                <AnimatePresence mode="wait">
-                  {appState === "processing" && (
-                    <motion.div
-                      key="processing"
-                      initial={{ opacity: 0, y: 8 }}
-                      animate={{ opacity: 1, y: 0 }}
-                      exit={{ opacity: 0, y: -8 }}
-                      transition={{ duration: 0.2 }}
-                    >
-                      <ProcessingScreen
-                        progress={progress}
-                        currentStep={currentStep}
-                        steps={processingSteps}
-                      />
-                    </motion.div>
-                  )}
+            <Card className="border-[hsl(var(--panel-border-strong))] bg-[hsl(var(--panel-surface))] p-4 shadow-[var(--panel-shadow)] md:p-5">
+              <div className="flex h-full min-h-0 flex-col gap-4">
+                <div className="rounded-xl border bg-card/80 px-4 py-3">
+                  <div className="flex items-start justify-between gap-3">
+                    <div className="space-y-1">
+                      <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">Analysis Workspace</p>
+                      <h2 className="text-base font-semibold leading-tight text-foreground">{rightPanelMeta.title}</h2>
+                      <p className="text-xs text-muted-foreground">{rightPanelMeta.subtitle}</p>
+                    </div>
+                    <span className={`inline-flex shrink-0 items-center rounded-full border px-2.5 py-1 text-[11px] font-semibold ${rightPanelMeta.statusClassName}`}>
+                      {rightPanelMeta.statusLabel}
+                    </span>
+                  </div>
+                </div>
 
-                  {appState === "results" && scanResults && (
-                    <motion.div
-                      key="results"
-                      initial={{ opacity: 0, y: 8 }}
-                      animate={{ opacity: 1, y: 0 }}
-                      exit={{ opacity: 0, y: -8 }}
-                      transition={{ duration: 0.2 }}
-                    >
-                      <ResultsScreen
-                        onScanAnother={handleScanAnother}
-                        scanResults={scanResults}
-                      />
-                    </motion.div>
-                  )}
+                <div className="min-h-0 flex-1 overflow-y-auto pr-1">
+                  <AnimatePresence mode="wait">
+                    {appState === "processing" && (
+                      <motion.div
+                        key="processing"
+                        initial={{ opacity: 0, y: 8 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        exit={{ opacity: 0, y: -8 }}
+                        transition={{ duration: 0.2 }}
+                      >
+                        <ProcessingScreen
+                          progress={progress}
+                          currentStep={currentStep}
+                          steps={processingSteps}
+                        />
+                      </motion.div>
+                    )}
 
-                  {appState === "error" && (
-                    <motion.div
-                      key="error"
-                      initial={{ opacity: 0, y: 8 }}
-                      animate={{ opacity: 1, y: 0 }}
-                      exit={{ opacity: 0, y: -8 }}
-                      transition={{ duration: 0.2 }}
-                      className="space-y-4"
-                    >
-                      <h2 className="text-xl font-semibold">Scan Failed</h2>
-                      <p className="text-sm text-muted-foreground">
-                        {scanError ?? "An unexpected error occurred while processing this prescription."}
-                      </p>
-                      <div className="flex gap-3">
-                        <Button
-                          onClick={() => {
-                            if (selectedFile) {
-                              setProgress(0);
-                              setCurrentStep(0);
-                              setScanError(null);
-                              setAppState("processing");
-                            }
-                          }}
-                          disabled={!selectedFile}
-                        >
-                          Retry
-                        </Button>
-                        <Button variant="outline" onClick={handleScanAnother}>
-                          Scan Another
-                        </Button>
-                      </div>
-                    </motion.div>
-                  )}
-                </AnimatePresence>
+                    {appState === "results" && scanResults && (
+                      <motion.div
+                        key="results"
+                        initial={{ opacity: 0, y: 8 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        exit={{ opacity: 0, y: -8 }}
+                        transition={{ duration: 0.2 }}
+                      >
+                        <ResultsScreen
+                          onScanAnother={handleScanAnother}
+                          scanResults={scanResults}
+                        />
+                      </motion.div>
+                    )}
+
+                    {appState === "error" && (
+                      <motion.div
+                        key="error"
+                        initial={{ opacity: 0, y: 8 }}
+                        animate={{ opacity: 1, y: 0 }}
+                        exit={{ opacity: 0, y: -8 }}
+                        transition={{ duration: 0.2 }}
+                        className="space-y-4"
+                      >
+                        <h2 className="text-xl font-semibold">Scan Failed</h2>
+                        <p className="text-sm text-muted-foreground">
+                          {scanError ?? "An unexpected error occurred while processing this prescription."}
+                        </p>
+                        <div className="flex gap-3">
+                          <Button
+                            onClick={() => {
+                              if (selectedFile) {
+                                setProgress(0);
+                                setCurrentStep(0);
+                                setScanError(null);
+                                setAppState("processing");
+                              }
+                            }}
+                            disabled={!selectedFile}
+                          >
+                            Retry
+                          </Button>
+                          <Button variant="outline" onClick={handleScanAnother}>
+                            Scan Another
+                          </Button>
+                        </div>
+                      </motion.div>
+                    )}
+                  </AnimatePresence>
+                </div>
               </div>
-            </div>
-          </Card>
-        </motion.div>
+            </Card>
+          </motion.div>
+        </div>
       </div>
     </div>
   );

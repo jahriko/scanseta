@@ -100,6 +100,45 @@ class TestFDACachePolicy(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(second[0].get("error_code"), "scrape_error")
         self.assertFalse(self.cache_path.exists())
 
+    async def test_legacy_not_found_without_error_code_is_ignored_and_replaced(self):
+        legacy_entry = [
+            {
+                "query": "cetirizine",
+                "found": False,
+                "matches": [],
+                "best_match": None,
+                "error": None,
+                "error_code": None,
+                "scraped_at": "2026-02-25T00:00:00",
+            }
+        ]
+        self.cache_path.write_text(json.dumps(legacy_entry), encoding="utf-8")
+
+        calls = 0
+
+        async def fake_search(name: str):
+            nonlocal calls
+            calls += 1
+            return {
+                "query": name,
+                "found": True,
+                "matches": [{"generic_name": "Cetirizine"}],
+                "best_match": {"generic_name": "Cetirizine"},
+                "error": None,
+                "error_code": None,
+                "scraped_at": "2026-02-25T01:00:00",
+            }
+
+        FDAVerificationScraper.search_drug = staticmethod(fake_search)  # type: ignore[method-assign]
+
+        results = await FDAVerificationScraper.verify_medications(["cetirizine"])
+        self.assertEqual(calls, 1)
+        self.assertTrue(results[0]["found"])
+
+        persisted = json.loads(self.cache_path.read_text(encoding="utf-8"))
+        self.assertEqual(len(persisted), 1)
+        self.assertTrue(persisted[0]["found"])
+
 
 if __name__ == "__main__":
     unittest.main()
