@@ -13,11 +13,15 @@ class TestTokenProcessing(unittest.TestCase):
         text = "Paracetamol 500mg q6h PRN, Ibuprofen BID"
         self.assertEqual(clean_extracted_tokens(text), ["Paracetamol", "Ibuprofen"])
 
-    def test_clean_extracted_tokens_splits_connectors(self):
+    def test_clean_extracted_tokens_preserves_combo_drugs(self):
+        text = "1) Amoxicillin / Clavulanic Acid"
+        self.assertEqual(clean_extracted_tokens(text), ["Amoxicillin / Clavulanic Acid"])
+
+    def test_clean_extracted_tokens_splits_trailing_list_items(self):
         text = "1) Amoxicillin / Clavulanic Acid and Cetirizine"
         self.assertEqual(
             clean_extracted_tokens(text),
-            ["Amoxicillin", "Clavulanic Acid", "Cetirizine"],
+            ["Amoxicillin / Clavulanic Acid", "Cetirizine"],
         )
 
     def test_clean_extracted_tokens_parse_error_cases(self):
@@ -38,7 +42,7 @@ class TestTokenProcessing(unittest.TestCase):
             SimpleNamespace(name="ibuprofen", flags=[]),
             SimpleNamespace(name="Ibuprofen", flags=[]),
         ]
-        self.assertEqual(extract_enrichment_candidates(meds), ["PARACETAMOL", "UNKNOWN", "ibuprofen"])
+        self.assertEqual(extract_enrichment_candidates(meds), ["PARACETAMOL", "ibuprofen"])
 
 
 if __name__ == "__main__":

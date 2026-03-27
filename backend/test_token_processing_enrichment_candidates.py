@@ -10,6 +10,17 @@ class _MedicationStub:
 
 
 class TestTokenProcessingEnrichmentCandidates(unittest.TestCase):
+    def test_oov_is_rejected(self):
+        self.assertFalse(is_enrichment_candidate("celecoxib", ["OOV"]))
+
+    def test_structured_oov_is_still_rejected(self):
+        self.assertFalse(
+            is_enrichment_candidate(
+                "celecoxib",
+                ["STRUCTURED_JSON", "OOV"],
+            )
+        )
+
     def test_structured_partial_with_low_plausibility_is_allowed(self):
         self.assertTrue(
             is_enrichment_candidate(

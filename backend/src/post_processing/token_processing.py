@@ -22,7 +22,38 @@ _SCHEDULE_PATTERN = re.compile(
 _LEADING_BULLET_PATTERN = re.compile(r"^[\s\-\u2022\*\d\)\.(]+")
 _STANDALONE_NUMBERS_PATTERN = re.compile(r"\b\d+\b")
 _MULTISPACE_PATTERN = re.compile(r"\s+")
-_CONNECTOR_SPLIT_PATTERN = re.compile(r"\s+(?:and|&)\s+|\s*/\s*", flags=re.IGNORECASE)
+_CONNECTOR_SPLIT_PATTERN = re.compile(r"\s+(?:and|&)\s+", flags=re.IGNORECASE)
+
+
+def _normalize_candidate_token(text: str) -> str:
+    normalized = text.strip()
+    normalized = _DOSAGE_PATTERN.sub("", normalized)
+    normalized = _LEADING_BULLET_PATTERN.sub("", normalized)
+    normalized = _SCHEDULE_PATTERN.sub("", normalized)
+    normalized = _STANDALONE_NUMBERS_PATTERN.sub("", normalized)
+    return _MULTISPACE_PATTERN.sub(" ", normalized).strip(" -")
+
+
+def _is_valid_candidate_token(text: str) -> bool:
+    if len(text) < 2:
+        return False
+    if not re.search(r"[A-Za-z]", text):
+        return False
+    if text.lower() in PLACEHOLDER_MEDICATION_NAMES:
+        return False
+    return True
+
+
+def _split_connector_parts(token: str) -> List[str]:
+    parts = [part for part in _CONNECTOR_SPLIT_PATTERN.split(token) if part.strip()]
+    if len(parts) <= 1:
+        return [token]
+
+    normalized_parts = [_normalize_candidate_token(part) for part in parts]
+    if all(_is_valid_candidate_token(part) for part in normalized_parts):
+        return normalized_parts
+
+    return [token]
 
 
 def clean_extracted_tokens(text: str) -> List[str]:
@@ -37,23 +68,13 @@ def clean_extracted_tokens(text: str) -> List[str]:
         if not token:
             continue
 
-        parts = [part for part in _CONNECTOR_SPLIT_PATTERN.split(token) if part.strip()]
-        if not parts:
-            parts = [token]
+        normalized_token = _normalize_candidate_token(token)
+        if not normalized_token:
+            continue
 
-        for part in parts:
-            normalized = part.strip()
-            normalized = _DOSAGE_PATTERN.sub("", normalized)
-            normalized = _LEADING_BULLET_PATTERN.sub("", normalized)
-            normalized = _SCHEDULE_PATTERN.sub("", normalized)
-            normalized = _STANDALONE_NUMBERS_PATTERN.sub("", normalized)
-            normalized = _MULTISPACE_PATTERN.sub(" ", normalized).strip(" -")
-
-            if len(normalized) < 2:
-                continue
-            if not re.search(r"[A-Za-z]", normalized):
-                continue
-            if normalized.lower() in PLACEHOLDER_MEDICATION_NAMES:
+        for part in _split_connector_parts(normalized_token):
+            normalized = _normalize_candidate_token(part)
+            if not _is_valid_candidate_token(normalized):
                 continue
 
             cleaned_tokens.append(normalized)
@@ -92,16 +113,14 @@ def is_enrichment_candidate(name: str, flags: Sequence[str]) -> bool:
     if any(flag in HARD_DISQUALIFYING_FLAGS for flag in flag_set):
         return False
 
+    if "OOV" in flag_set:
+        return False
+
     is_structured_output = any(flag in TRUSTED_STRUCTURED_FLAGS for flag in flag_set)
 
     # Keep OCR-token heuristics strict, but trust model-emitted structured fields
     # even when plausibility scoring is conservative.
     if "LOW_PLAUSIBILITY" in flag_set and not is_structured_output:
-        return False
-
-    # Allow plausible OOV entries to flow into enrichment so FDA/PNDF can still
-    # validate brand names that are not in our local lexicon.
-    if "OOV" in flag_set and "LOW_PLAUSIBILITY" in flag_set and not is_structured_output:
         return False
 
     return True
