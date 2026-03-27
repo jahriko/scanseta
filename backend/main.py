@@ -123,6 +123,8 @@ class EnrichmentResponse(BaseModel):
     pndf_enriched: List[PNDFEnrichmentItem] = Field(default_factory=list)
     enriched_medications: List[PNDFEnrichmentItem] = Field(default_factory=list)
     count: int
+    enrichment_status: str = "completed"
+    message: Optional[str] = None
 
 
 class PrescriptionResponse(BaseModel):
@@ -144,6 +146,7 @@ class PrescriptionResponse(BaseModel):
     fda_enrichment_status: Optional[str] = None
     pndf_enrichment_status: Optional[str] = None
     enrichment_updated_at: Optional[str] = None
+    enrichment_message: Optional[str] = None
 
 
 class EnrichmentRequest(BaseModel):
@@ -165,6 +168,7 @@ class EnrichmentJobStatusResponse(BaseModel):
     finished_at: Optional[str] = None
     updated_at: Optional[str] = None
     expires_at: Optional[str] = None
+    message: Optional[str] = None
 
 
 class EnrichmentRetryRequest(BaseModel):
@@ -179,6 +183,31 @@ def _truthy_env(value: Optional[str]) -> bool:
 
 ALLOWED_LOAD_POLICIES = {"fail_fast", "fallback_auto", "fallback_auto_cpu"}
 DEFAULT_LOAD_POLICY = "fail_fast"
+ENRICHMENT_ENABLED_DEFAULT = "true"
+
+
+def _source_enabled(env_name: str, default: str = ENRICHMENT_ENABLED_DEFAULT) -> bool:
+    return _truthy_env(os.getenv(env_name, default))
+
+
+FDA_ENRICHMENT_ENABLED = _source_enabled("FDA_ENRICHMENT_ENABLED")
+PNDF_ENRICHMENT_ENABLED = _source_enabled("PNDF_ENRICHMENT_ENABLED")
+ENRICHMENT_ENABLED = FDA_ENRICHMENT_ENABLED or PNDF_ENRICHMENT_ENABLED
+
+
+def _get_enrichment_disabled_message() -> str:
+    disabled_sources = []
+    if not FDA_ENRICHMENT_ENABLED:
+        disabled_sources.append("FDA")
+    if not PNDF_ENRICHMENT_ENABLED:
+        disabled_sources.append("PNDF")
+    if not disabled_sources:
+        return "Live enrichment is available."
+    joined = " and ".join(disabled_sources)
+    return f"Live {joined} enrichment is disabled on this deployment. OCR extraction remains available."
+
+
+ENRICHMENT_DISABLED_MESSAGE = _get_enrichment_disabled_message()
 
 
 def _resolve_load_policy() -> str:
@@ -1044,10 +1073,13 @@ def _job_to_status_response(job: Dict[str, Any]) -> EnrichmentJobStatusResponse:
         finished_at=job.get("finished_at"),
         updated_at=job.get("updated_at"),
         expires_at=job.get("expires_at"),
+        message=job.get("message"),
     )
 
 
 def _enrichment_status_from_sources(fda_status: str, pndf_status: str) -> str:
+    if fda_status == "disabled" and pndf_status == "disabled":
+        return "disabled"
     terminal_success = {"completed"}
     terminal_failure = {"failed", "timed_out"}
     if fda_status in terminal_success and pndf_status in terminal_success:
@@ -1093,6 +1125,13 @@ def _derive_source_status_from_results(results: List[Dict[str, Any]]) -> Tuple[s
 
 
 async def _execute_fda_lookup(drug_names: List[str]) -> Dict[str, Any]:
+    if not FDA_ENRICHMENT_ENABLED:
+        return {
+            "status": "disabled",
+            "results": [],
+            "error": "",
+            "message": "FDA enrichment is disabled on this deployment.",
+        }
     try:
         lookup_task = asyncio.create_task(FDAVerificationScraper.verify_medications(drug_names))
         done, _ = await asyncio.wait({lookup_task}, timeout=ENRICHMENT_FDA_TIMEOUT_SECONDS)
@@ -1125,6 +1164,13 @@ async def _execute_fda_lookup(drug_names: List[str]) -> Dict[str, Any]:
 
 
 async def _execute_pndf_lookup(drug_names: List[str]) -> Dict[str, Any]:
+    if not PNDF_ENRICHMENT_ENABLED:
+        return {
+            "status": "disabled",
+            "results": [],
+            "error": "",
+            "message": "PNDF enrichment is disabled on this deployment.",
+        }
     try:
         lookup_task = asyncio.create_task(PNDFScraper.enrich_medications(drug_names))
         done, _ = await asyncio.wait({lookup_task}, timeout=ENRICHMENT_PNDF_TIMEOUT_SECONDS)
@@ -1164,8 +1210,16 @@ async def _run_enrichment_job(job_id: str) -> None:
         job["status"] = "running"
         job["started_at"] = job.get("started_at") or _utcnow_iso()
         job["updated_at"] = _utcnow_iso()
+        if not ENRICHMENT_ENABLED:
+            job["status"] = "disabled"
+            job["fda_status"] = "disabled"
+            job["pndf_status"] = "disabled"
+            job["message"] = ENRICHMENT_DISABLED_MESSAGE
+            job["finished_at"] = _utcnow_iso()
         _prune_expired_jobs_locked()
         _queue_enrichment_jobs_persist_locked()
+        if not ENRICHMENT_ENABLED:
+            return
 
     async with _enrichment_jobs_lock:
         job = _enrichment_jobs.get(job_id)
@@ -1218,8 +1272,10 @@ async def _run_enrichment_job(job_id: str) -> None:
 
         job["errors"] = errors
         job["status"] = _enrichment_status_from_sources(str(job.get("fda_status")), str(job.get("pndf_status")))
+        if job["status"] == "disabled":
+            job["message"] = ENRICHMENT_DISABLED_MESSAGE
         job["updated_at"] = _utcnow_iso()
-        if job["status"] in {"completed", "partial", "failed", "timed_out"}:
+        if job["status"] in {"completed", "partial", "failed", "timed_out", "disabled"}:
             job["finished_at"] = _utcnow_iso()
         _queue_enrichment_jobs_persist_locked()
 
@@ -1254,10 +1310,20 @@ async def _create_and_start_enrichment_job(drug_names: List[str]) -> Dict[str, A
     async with _enrichment_jobs_lock:
         _prune_expired_jobs_locked()
         job = _create_enrichment_job(filtered_drug_names)
+        if not ENRICHMENT_ENABLED:
+            now = _utcnow_iso()
+            job["status"] = "disabled"
+            job["fda_status"] = "disabled"
+            job["pndf_status"] = "disabled"
+            job["updated_at"] = now
+            job["started_at"] = now
+            job["finished_at"] = now
+            job["message"] = ENRICHMENT_DISABLED_MESSAGE
         _enrichment_jobs[job["job_id"]] = job
         _queue_enrichment_jobs_persist_locked()
 
-    await _start_enrichment_job(job["job_id"])
+    if ENRICHMENT_ENABLED:
+        await _start_enrichment_job(job["job_id"])
     return job
 
 
@@ -1405,8 +1471,9 @@ async def startup_event():
     
     await _initialize_enrichment_jobs()
 
-    # Initialize PNDF cache in background (non-blocking)
-    asyncio.create_task(initialize_pndf_cache())
+    # Initialize PNDF cache in background only when live PNDF enrichment is enabled.
+    if PNDF_ENRICHMENT_ENABLED:
+        asyncio.create_task(initialize_pndf_cache())
 
 @app.on_event("shutdown")
 async def shutdown_event():
@@ -1496,6 +1563,13 @@ async def enrich_medications(request: EnrichmentRequest):
     """
     try:
         normalized_drug_names = normalize_manual_drug_names(request.drug_names)
+        if not ENRICHMENT_ENABLED:
+            return EnrichmentResponse(
+                success=True,
+                count=len(normalized_drug_names),
+                enrichment_status="disabled",
+                message=ENRICHMENT_DISABLED_MESSAGE,
+            )
         logger.info(
             f"Enriching {len(normalized_drug_names)} normalized medications "
             f"(received {len(request.drug_names)}) with FDA and PNDF data"
@@ -1517,6 +1591,10 @@ async def enrich_medications(request: EnrichmentRequest):
             pndf_enriched=pndf_enriched,
             enriched_medications=pndf_enriched,
             count=len(normalized_drug_names),
+            enrichment_status=_enrichment_status_from_sources(
+                str(fda_result.get("status", "completed")),
+                str(pndf_result.get("status", "completed")),
+            ),
         )
     except Exception as e:
         logger.error(f"Error enriching medications: {e}")
@@ -1630,7 +1708,7 @@ async def scan_prescription(file: UploadFile = File(...)):
         enrichment_job_id: Optional[str] = None
         enrichment_queue_done_ts = candidate_extract_done_ts
 
-        if drug_names:
+        if drug_names and ENRICHMENT_ENABLED:
             try:
                 enrichment_job = await _create_and_start_enrichment_job(drug_names)
                 enrichment_job_id = enrichment_job.get("job_id")
@@ -1649,6 +1727,11 @@ async def scan_prescription(file: UploadFile = File(...)):
                 enrichment_updated_at = _utcnow_iso()
             finally:
                 enrichment_queue_done_ts = perf_counter()
+        elif drug_names:
+            enrichment_status = "disabled"
+            fda_enrichment_status = "disabled" if not FDA_ENRICHMENT_ENABLED else None
+            pndf_enrichment_status = "disabled" if not PNDF_ENRICHMENT_ENABLED else None
+            enrichment_updated_at = _utcnow_iso()
 
         response = PrescriptionResponse(
             success=True,
@@ -1663,12 +1746,13 @@ async def scan_prescription(file: UploadFile = File(...)):
             fda_verification=fda_verification_data,
             pndf_enriched=pndf_enriched_data,
             enriched=pndf_enriched_data,
-            can_enrich=bool(drug_names),
+            can_enrich=bool(drug_names) and ENRICHMENT_ENABLED,
             enrichment_job_id=enrichment_job_id,
             enrichment_status=enrichment_status,
             fda_enrichment_status=fda_enrichment_status,
             pndf_enrichment_status=pndf_enrichment_status,
             enrichment_updated_at=enrichment_updated_at,
+            enrichment_message=ENRICHMENT_DISABLED_MESSAGE if drug_names and not ENRICHMENT_ENABLED else None,
         )
         response_built_done_ts = perf_counter()
 
@@ -1741,7 +1825,7 @@ async def scan_batch(files: List[UploadFile] = File(...)):
                 post_process_stats["blocked_from_enrichment"],
             )
 
-            if drug_names:
+            if drug_names and ENRICHMENT_ENABLED:
                 try:
                     fda_result = await _execute_fda_lookup(drug_names)
                     fda_verification_data = [_to_fda_item(item) for item in _list_coerce(fda_result.get("results"))]
@@ -1770,7 +1854,11 @@ async def scan_batch(files: List[UploadFile] = File(...)):
                 "fda_verification": fda_verification_data,
                 "pndf_enriched": pndf_enriched_data,
                 "enriched": pndf_enriched_data,
-                "can_enrich": bool(drug_names),
+                "can_enrich": bool(drug_names) and ENRICHMENT_ENABLED,
+                "enrichment_status": "disabled" if drug_names and not ENRICHMENT_ENABLED else "not_requested",
+                "fda_enrichment_status": "disabled" if drug_names and not FDA_ENRICHMENT_ENABLED else None,
+                "pndf_enrichment_status": "disabled" if drug_names and not PNDF_ENRICHMENT_ENABLED else None,
+                "enrichment_message": ENRICHMENT_DISABLED_MESSAGE if drug_names and not ENRICHMENT_ENABLED else None,
             })
         except Exception as e:
             results.append({

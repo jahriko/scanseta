@@ -18,7 +18,7 @@ const processingSteps = [
   { label: "Finalizing scan response", duration: 500 },
 ];
 
-const terminalEnrichmentStatuses = new Set(["completed", "partial", "failed", "timed_out", "expired", "not_requested"]);
+const terminalEnrichmentStatuses = new Set(["completed", "partial", "failed", "timed_out", "expired", "not_requested", "disabled"]);
 const demoPrescriptionImages = [
   "RX000005.jpg",
   "RX002290.jpg",
@@ -63,6 +63,15 @@ const getRightPanelMeta = (
         subtitle: "Structured OCR extraction is available for this scan.",
         statusLabel: "Complete",
         statusClassName: "border-green-500/30 bg-green-500/10 text-green-700",
+      };
+    }
+
+    if (enrichmentStatus === "disabled") {
+      return {
+        title: "Medication Review",
+        subtitle: scanResults?.enrichment_message || "Live FDA and PNDF validation is disabled on this server.",
+        statusLabel: "OCR Only",
+        statusClassName: "border-muted bg-muted/40 text-muted-foreground",
       };
     }
 
@@ -411,6 +420,7 @@ const Index = () => {
             pndf_enriched: status.pndf_enriched,
             enriched: status.pndf_enriched,
             enriched_medications: status.pndf_enriched,
+            enrichment_message: status.message ?? previous.enrichment_message ?? null,
           };
         });
 

@@ -99,6 +99,12 @@ const normalizeStatus = (value?: string | null): string => (value ?? "").trim().
 
 const getEnrichmentBanner = (status: string): { title: string; detail: string; className: string } => {
   switch (status) {
+    case "disabled":
+      return {
+        title: "Validation disabled",
+        detail: "Live FDA and PNDF validation is disabled on this deployment.",
+        className: "border-muted bg-muted/20 text-muted-foreground",
+      };
     case "queued":
       return {
         title: "Validation queued",
@@ -168,6 +174,8 @@ const getSourceStateLabel = (
   }
 
   switch (sourceStatus) {
+    case "disabled":
+      return "Disabled";
     case "queued":
       return "Queued";
     case "running":
@@ -196,10 +204,16 @@ const getSourceStateClass = (statusLabel: string): string => {
   if (statusLabel === "Not requested") {
     return "border-muted bg-muted/40 text-muted-foreground";
   }
+  if (statusLabel === "Disabled") {
+    return "border-muted bg-muted/40 text-muted-foreground";
+  }
   return "border-amber-500/30 bg-amber-500/10 text-amber-700";
 };
 
 const getSourceMissingMessage = (sourceStatus: string, sourceName: "FDA" | "PNDF"): string => {
+  if (sourceStatus === "disabled") {
+    return `${sourceName} validation is disabled on this deployment.`;
+  }
   if (sourceStatus === "queued" || sourceStatus === "running") {
     return `${sourceName} validation is in progress.`;
   }
@@ -231,6 +245,8 @@ const toStatusPillText = (status: string): string => {
       return "Timed out";
     case "failed":
       return "Failed";
+    case "disabled":
+      return "Disabled";
     case "not_requested":
       return "Not requested";
     default:
@@ -298,9 +314,14 @@ const ResultsScreen = ({ onScanAnother, scanResults }: ResultsScreenProps) => {
   const pndfItems = scanResults.pndf_enriched ?? scanResults.enriched_medications ?? scanResults.enriched ?? [];
   const fdaItems = scanResults.fda_verification ?? [];
   const enrichmentStatus = normalizeStatus(scanResults.enrichment_status || (scanResults.can_enrich ? "running" : "not_requested"));
-  const fdaEnrichmentStatus = normalizeStatus(scanResults.fda_enrichment_status || (fdaItems.length > 0 ? "completed" : scanResults.can_enrich ? "running" : "pending"));
-  const pndfEnrichmentStatus = normalizeStatus(scanResults.pndf_enrichment_status || (pndfItems.length > 0 ? "completed" : scanResults.can_enrich ? "running" : "pending"));
+  const fdaEnrichmentStatus = normalizeStatus(
+    scanResults.fda_enrichment_status || (fdaItems.length > 0 ? "completed" : scanResults.can_enrich ? "running" : enrichmentStatus === "disabled" ? "disabled" : "pending"),
+  );
+  const pndfEnrichmentStatus = normalizeStatus(
+    scanResults.pndf_enrichment_status || (pndfItems.length > 0 ? "completed" : scanResults.can_enrich ? "running" : enrichmentStatus === "disabled" ? "disabled" : "pending"),
+  );
   const enrichmentBanner = getEnrichmentBanner(enrichmentStatus);
+  const enrichmentMessage = scanResults.enrichment_message?.trim();
 
   const fdaByKey = new Map<string, FDAVerificationItem>();
   fdaItems.forEach((item) => {
@@ -377,7 +398,7 @@ const ResultsScreen = ({ onScanAnother, scanResults }: ResultsScreenProps) => {
           </Badge>
         </div>
 
-        {scanResults.can_enrich ? (
+        {scanResults.can_enrich || enrichmentStatus === "disabled" ? (
           <div className={`mt-3 rounded-lg border p-3 ${enrichmentBanner.className}`}>
             <div className="flex flex-wrap items-center justify-between gap-2">
               <p className="text-sm font-semibold">{enrichmentBanner.title}</p>
@@ -385,7 +406,7 @@ const ResultsScreen = ({ onScanAnother, scanResults }: ResultsScreenProps) => {
                 {toStatusPillText(enrichmentStatus)}
               </Badge>
             </div>
-            <p className="mt-1.5 text-sm">{enrichmentBanner.detail}</p>
+            <p className="mt-1.5 text-sm">{enrichmentMessage || enrichmentBanner.detail}</p>
             <div className="mt-2.5 flex flex-wrap items-center gap-2">
               <Badge variant="outline" className={`${getSourceStateClass(toStatusPillText(fdaEnrichmentStatus))} text-[11px]`}>
                 FDA {toStatusPillText(fdaEnrichmentStatus)}

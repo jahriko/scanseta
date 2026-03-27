@@ -78,6 +78,7 @@ export interface PrescriptionResponse {
   fda_enrichment_status?: string | null;
   pndf_enrichment_status?: string | null;
   enrichment_updated_at?: string | null;
+  enrichment_message?: string | null;
 }
 
 export interface EnrichmentJobStatusResponse {
@@ -95,6 +96,7 @@ export interface EnrichmentJobStatusResponse {
   finished_at?: string | null;
   updated_at?: string | null;
   expires_at?: string | null;
+  message?: string | null;
 }
 
 export interface HealthResponse {
