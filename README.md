@@ -106,6 +106,7 @@ Notes:
 - Merges optional `backend/data/drug_lexicon_overrides.txt`
 - Writes `backend/data/drug_lexicon.txt`
 - By default, preserves existing lexicon entries to avoid accidental shrink
+- `OOV` medications are blocked from FDA/PNDF enrichment, so lexicon coverage directly affects recall
 - Use `--replace-output` for strict rebuild from cache + overrides only
 
 ## API Endpoints

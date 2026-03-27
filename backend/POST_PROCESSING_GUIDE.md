@@ -104,6 +104,8 @@ MAX_CANDIDATES=10
 
 The VLM outputs comma-separated drug names. The parser:
 - Splits by `,`, `;`, `\n`
+- Preserves slash-based combo drugs (for example `Amoxicillin / Clavulanic Acid`)
+- Splits `and` / `&` only when the token still looks like a clean medication list after normalization
 - Removes dosage units (`mg`, `ml`, `tabs`)
 - Removes frequency indicators (`BID`, `TID`, `daily`)
 - Cleans whitespace and deduplicates
@@ -132,7 +134,8 @@ For each token:
 ### 5. Enrichment
 
 Only tokens that pass enrichment gating are sent to FDA/PNDF enrichment.  
-Blocked flags: `OOV`, `PARSE_ERROR`, `POST_PROCESS_ERROR`, `NO_POST_PROCESSOR`.
+Blocked flags: `OOV`, `PARSE_ERROR`, `POST_PROCESS_ERROR`, `NO_POST_PROCESSOR`.  
+Structured model output may bypass `LOW_PLAUSIBILITY`, but not `OOV`.
 
 ## Examples
 
@@ -190,11 +193,12 @@ python test_post_processing.py
 - **N-gram indexing**: O(k) candidate generation instead of O(n) full scan
 - **MAX_CANDIDATES**: Limits fuzzy matching computation
 - **Lazy initialization**: Post-processor loaded at startup
+- **Single-token fast path**: Parser calls `process_token()` directly and avoids batch wrapper overhead for one-off tokens
 
 ## Observability
 
 Logs include:
-- Post-processing summary per request (OOV count, low-plausibility count)
+- Post-processing summary per request (exact, fuzzy, OOV, low-plausibility, blocked-from-enrichment counts)
 - Enrichment statistics (which drugs were enriched)
 - Error handling (graceful degradation if post-processor fails)
 
