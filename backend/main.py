@@ -39,6 +39,7 @@ from src.post_processing import DrugPostProcessor, PostProcessingConfig
 from src.post_processing.token_processing import (
     clean_extracted_tokens,
     extract_enrichment_candidates,
+    is_enrichment_candidate,
     normalize_manual_drug_names,
 )
 
@@ -209,6 +210,35 @@ def _to_pndf_item(item: Dict[str, Any]) -> PNDFEnrichmentItem:
 
 def _to_fda_item(item: Dict[str, Any]) -> FDAVerificationItem:
     return FDAVerificationItem(**item)
+
+
+def _summarize_medication_post_processing(medications: List[MedicationInfo]) -> Dict[str, int]:
+    exact_count = 0
+    fuzzy_count = 0
+    oov_count = 0
+    low_plausibility_count = 0
+    blocked_count = 0
+
+    for medication in medications:
+        flags = medication.flags or []
+        if medication.match_method == "exact":
+            exact_count += 1
+        elif medication.match_method in {"edit_distance", "similarity"}:
+            fuzzy_count += 1
+        if "OOV" in flags:
+            oov_count += 1
+        if "LOW_PLAUSIBILITY" in flags:
+            low_plausibility_count += 1
+        if not is_enrichment_candidate(medication.name, flags):
+            blocked_count += 1
+
+    return {
+        "exact": exact_count,
+        "fuzzy": fuzzy_count,
+        "oov": oov_count,
+        "low_plausibility": low_plausibility_count,
+        "blocked_from_enrichment": blocked_count,
+    }
 
 
 def _resolve_device_map_configuration() -> Dict[str, Any]:
@@ -1588,6 +1618,7 @@ async def scan_prescription(file: UploadFile = File(...)):
         parse_done_ts = perf_counter()
 
         drug_names = extract_enrichment_candidates(medications)
+        post_process_stats = _summarize_medication_post_processing(medications)
         candidate_extract_done_ts = perf_counter()
         enrichment_job: Optional[Dict[str, Any]] = None
         fda_verification_data: Optional[List[FDAVerificationItem]] = None
@@ -1648,7 +1679,8 @@ async def scan_prescription(file: UploadFile = File(...)):
                 "scan_timing cache_hit=false total=%.3fs read=%.3fs image_decode=%.3fs "
                 "predict=%.3fs parse=%.3fs candidate_extract=%.3fs "
                 "queue_enrichment=%.3fs response_build=%.3fs cache_store=%.3fs "
-                "medications=%d candidates=%d model_processing_time=%.3fs"
+                "medications=%d candidates=%d exact=%d fuzzy=%d oov=%d "
+                "low_plausibility=%d blocked_from_enrichment=%d model_processing_time=%.3fs"
             ),
             cache_store_done_ts - request_started_ts,
             read_done_ts - request_started_ts,
@@ -1661,6 +1693,11 @@ async def scan_prescription(file: UploadFile = File(...)):
             cache_store_done_ts - response_built_done_ts,
             len(medications),
             len(drug_names),
+            post_process_stats["exact"],
+            post_process_stats["fuzzy"],
+            post_process_stats["oov"],
+            post_process_stats["low_plausibility"],
+            post_process_stats["blocked_from_enrichment"],
             float(result.get("processing_time", 0.0)),
         )
         return response
@@ -1688,8 +1725,21 @@ async def scan_batch(files: List[UploadFile] = File(...)):
             medications = parsed_output["medications"]
 
             drug_names = extract_enrichment_candidates(medications)
+            post_process_stats = _summarize_medication_post_processing(medications)
             fda_verification_data = None
             pndf_enriched_data = None
+
+            logger.info(
+                "scan_batch_post_processing file=%s medications=%d candidates=%d exact=%d fuzzy=%d oov=%d low_plausibility=%d blocked_from_enrichment=%d",
+                file.filename,
+                len(medications),
+                len(drug_names),
+                post_process_stats["exact"],
+                post_process_stats["fuzzy"],
+                post_process_stats["oov"],
+                post_process_stats["low_plausibility"],
+                post_process_stats["blocked_from_enrichment"],
+            )
 
             if drug_names:
                 try:
@@ -1869,24 +1919,22 @@ def _build_medication_info(
     flags = list(base_flags or [])
     if post_processor:
         try:
-            results = post_processor.process_tokens([token])
-            if results:
-                result = results[0]
-                final_name = result.canonical_name if result.canonical_name else result.original_name
-                merged_flags = list(dict.fromkeys(flags + list(result.flags)))
-                return MedicationInfo(
-                    name=final_name,
-                    dosage=dosage,
-                    signa=signa,
-                    frequency=frequency,
-                    confidence=0.9,
-                    original_name=result.original_name,
-                    flags=merged_flags,
-                    match_method=result.match_method,
-                    edit_distance=result.edit_distance,
-                    similarity=result.similarity,
-                    plausibility=result.plausibility,
-                )
+            result = post_processor.process_token(token)
+            final_name = result.canonical_name if result.canonical_name else result.original_name
+            merged_flags = list(dict.fromkeys(flags + list(result.flags)))
+            return MedicationInfo(
+                name=final_name,
+                dosage=dosage,
+                signa=signa,
+                frequency=frequency,
+                confidence=0.9,
+                original_name=result.original_name,
+                flags=merged_flags,
+                match_method=result.match_method,
+                edit_distance=result.edit_distance,
+                similarity=result.similarity,
+                plausibility=result.plausibility,
+            )
         except Exception as e:
             logger.error(f"Post-processing error: {e}")
             flags = list(dict.fromkeys(flags + ["POST_PROCESS_ERROR"]))
