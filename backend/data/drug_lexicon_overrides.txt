@@ -1,3 +1,7 @@
 # Optional manual additions for local clinic/hospital usage.
 # One term per line, e.g.:
 # KAMILLOSAN
+CO-AMOXICLAV
+DAPAGLIFLOZIN
+LAGUNDI
+CANDESARTAN
