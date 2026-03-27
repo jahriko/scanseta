@@ -347,8 +347,10 @@ class Flagger:
         if canonical_name is None:
             flags.append("OOV")
         
-        # Low plausibility flag
-        if plausibility < plausibility_threshold:
+        # Plausibility is only a fallback signal for unmatched OCR noise.
+        # Once a token has an accepted lexicon match, keep the score for
+        # observability but do not flag it as low plausibility.
+        if canonical_name is None and plausibility < plausibility_threshold:
             flags.append("LOW_PLAUSIBILITY")
         
         return flags

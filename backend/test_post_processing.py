@@ -6,7 +6,9 @@ Tests candidate matching, plausibility screening, and flagging
 import unittest
 import tempfile
 import os
+from pathlib import Path
 from src.post_processing import DrugPostProcessor, PostProcessingConfig
+from src.post_processing.drug_postprocessor import LexiconLoader
 
 
 class TestDrugPostProcessing(unittest.TestCase):
@@ -58,6 +60,8 @@ class TestDrugPostProcessing(unittest.TestCase):
         self.assertEqual(result.edit_distance, 0)
         self.assertEqual(result.similarity, 1.0)
         self.assertNotIn("OOV", result.flags)
+        self.assertNotIn("LOW_PLAUSIBILITY", result.flags)
+        self.assertLess(result.plausibility, self.config.plausibility_threshold)
     
     def test_exact_match_case_insensitive(self):
         """Test exact match with different casing"""
@@ -78,6 +82,7 @@ class TestDrugPostProcessing(unittest.TestCase):
         self.assertEqual(result.edit_distance, 1)
         self.assertLessEqual(result.edit_distance, 2)
         self.assertNotIn("OOV", result.flags)
+        self.assertNotIn("LOW_PLAUSIBILITY", result.flags)
     
     def test_edit_distance_match_two_typos(self):
         """Test edit distance matching with two character errors"""
@@ -98,6 +103,7 @@ class TestDrugPostProcessing(unittest.TestCase):
         self.assertEqual(result.canonical_name, "IBUPROFEN")
         self.assertIsNotNone(result.match_method)
         self.assertNotIn("OOV", result.flags)
+        self.assertNotIn("LOW_PLAUSIBILITY", result.flags)
     
     def test_oov_token(self):
         """Test OOV flagging for unknown drugs"""
@@ -249,6 +255,13 @@ class TestDrugPostProcessing(unittest.TestCase):
             self.assertIn("OOV", result.flags)
         finally:
             os.unlink(temp_lexicon.name)
+
+    def test_default_lexicon_contains_targeted_follow_up_terms(self):
+        """The shipped lexicon should cover targeted additions used by the single-image flow."""
+        data_dir = Path(__file__).resolve().parent / "data"
+        _, normalized_to_canonical = LexiconLoader.load(str(data_dir / "drug_lexicon.txt"))
+        self.assertIn("dapagliflozin", normalized_to_canonical)
+        self.assertIn("coamoxiclav", normalized_to_canonical)
 
 
 class TestParsingIntegration(unittest.TestCase):
