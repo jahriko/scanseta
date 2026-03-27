@@ -5,8 +5,6 @@ import {
   Pill,
   FileText,
   AlertCircle,
-  ShieldCheck,
-  ShieldAlert,
   BookOpenText,
   ChevronDown,
 } from "lucide-react";
@@ -397,30 +395,6 @@ const ResultsScreen = ({ onScanAnother, scanResults }: ResultsScreenProps) => {
             {medicationsToDisplay.length} total
           </Badge>
         </div>
-
-        {scanResults.can_enrich || enrichmentStatus === "disabled" ? (
-          <div className={`mt-3 rounded-lg border p-3 ${enrichmentBanner.className}`}>
-            <div className="flex flex-wrap items-center justify-between gap-2">
-              <p className="text-sm font-semibold">{enrichmentBanner.title}</p>
-              <Badge variant="outline" className={`${getSourceStateClass(toStatusPillText(enrichmentStatus))} text-[11px]`}>
-                {toStatusPillText(enrichmentStatus)}
-              </Badge>
-            </div>
-            <p className="mt-1.5 text-sm">{enrichmentMessage || enrichmentBanner.detail}</p>
-            <div className="mt-2.5 flex flex-wrap items-center gap-2">
-              <Badge variant="outline" className={`${getSourceStateClass(toStatusPillText(fdaEnrichmentStatus))} text-[11px]`}>
-                FDA {toStatusPillText(fdaEnrichmentStatus)}
-              </Badge>
-              <Badge variant="outline" className={`${getSourceStateClass(toStatusPillText(pndfEnrichmentStatus))} text-[11px]`}>
-                PNDF {toStatusPillText(pndfEnrichmentStatus)}
-              </Badge>
-            </div>
-          </div>
-        ) : (
-          <div className="mt-3 rounded-lg border border-muted bg-muted/20 p-3 text-sm text-muted-foreground">
-            Validation was not requested for this scan. OCR extraction details are still available below.
-          </div>
-        )}
       </div>
 
       {isUsingFallbackMedications && (
@@ -442,29 +416,8 @@ const ResultsScreen = ({ onScanAnother, scanResults }: ResultsScreenProps) => {
           {medicationsToDisplay.map((item, index) => {
             const med = item.medication;
             const displayName = toDisplayMedicationName(item.name);
-            const extractionSummary = med?.dosage
-              ? `Dosage ${med.dosage}`
-              : med?.signa
-                ? `Signa ${med.signa}`
-                : "No structured extraction details";
-            const fdaStatus = getSourceStateLabel(
-              fdaEnrichmentStatus,
-              !!item.fda,
-              !!item.fda?.found,
-              item.fda?.error_code,
-              "FDA",
-            );
-            const pndfStatus = getSourceStateLabel(
-              pndfEnrichmentStatus,
-              !!item.pndf,
-              !!item.pndf?.found,
-              item.pndf?.error_code,
-              "PNDF",
-            );
-            const fdaBestMatch = item.fda?.best_match;
             const medicationKey = normalizeMedicationKey(item.name) || `medication-${index}`;
             const isOpen = openMedicationKey === medicationKey;
-            const dosageFormPreview = formatDosageFormsPreview(item.pndf?.dosage_forms);
             const patientSummary = buildPatientMedicationSummary(displayName, item.pndf);
 
             return (
@@ -477,20 +430,27 @@ const ResultsScreen = ({ onScanAnother, scanResults }: ResultsScreenProps) => {
                 <Card className="overflow-hidden border bg-card/90 shadow-sm">
                   <Collapsible open={isOpen} onOpenChange={(nextOpen) => setOpenMedicationKey(nextOpen ? medicationKey : null)}>
                     <CollapsibleTrigger className="flex w-full items-center justify-between gap-3 px-4 py-4 text-left transition-colors hover:bg-muted/30 md:px-5">
-                      <div className="min-w-0 space-y-2">
-                        <div className="flex flex-wrap items-center gap-2">
-                          <h4 className="text-base font-semibold leading-tight text-foreground">{displayName}</h4>
-                          <span className="inline-flex max-w-full items-center rounded-full border bg-muted/30 px-2.5 py-1 text-xs text-foreground/85">
-                            <span className="truncate">{extractionSummary}</span>
-                          </span>
-                        </div>
-                        <div className="flex flex-wrap items-center gap-2">
-                          <Badge variant="outline" className={`${getSourceStateClass(fdaStatus)} text-[11px]`}>
-                            FDA {fdaStatus}
-                          </Badge>
-                          <Badge variant="outline" className={`${getSourceStateClass(pndfStatus)} text-[11px]`}>
-                            PNDF {pndfStatus}
-                          </Badge>
+                      <div className="min-w-0 flex-1 space-y-1.5">
+                        <h4 className="break-words text-base font-semibold leading-tight text-foreground">{displayName}</h4>
+                        <div className="flex flex-wrap items-center gap-1.5">
+                          {med?.dosage && (
+                            <span className="inline-flex items-center rounded-full border bg-muted/30 px-2.5 py-0.5 text-xs text-foreground/85">
+                              {med.dosage}
+                            </span>
+                          )}
+                          {med?.frequency && (
+                            <span className="inline-flex items-center rounded-full border bg-muted/30 px-2.5 py-0.5 text-xs text-foreground/85">
+                              {med.frequency}
+                            </span>
+                          )}
+                          {med?.signa && (
+                            <span className="inline-flex items-center rounded-full border bg-muted/30 px-2.5 py-0.5 text-xs text-foreground/85">
+                              {med.signa}
+                            </span>
+                          )}
+                          {!med?.dosage && !med?.frequency && !med?.signa && (
+                            <span className="text-xs text-muted-foreground">No extraction details</span>
+                          )}
                         </div>
                       </div>
 
@@ -500,85 +460,20 @@ const ResultsScreen = ({ onScanAnother, scanResults }: ResultsScreenProps) => {
                     </CollapsibleTrigger>
 
                     <CollapsibleContent className="px-4 pb-4 md:px-5">
-                      <div className="grid gap-3 lg:grid-cols-3">
-                        <div className="space-y-2.5 rounded-lg border bg-muted/20 p-3.5">
-                          <div className="flex items-center gap-2 text-sm font-semibold uppercase tracking-[0.06em] text-muted-foreground">
-                            <BookOpenText className="h-4 w-4 text-primary" />
-                            Extraction
-                          </div>
-                          {med?.dosage && <DetailRow label="Dosage" value={med.dosage} />}
-                          {med?.signa && <DetailRow label="Signa" value={med.signa} />}
-                          {med?.frequency && <DetailRow label="Frequency" value={med.frequency} />}
-                          {med?.match_method && <DetailRow label="Match" value={med.match_method} subtle />}
-                          {!med?.dosage && !med?.signa && !med?.frequency && !med?.match_method && (
-                            <p className="rounded-md border border-dashed border-border bg-card/60 px-2.5 py-2 text-sm text-muted-foreground">
-                              No extra OCR structure available.
-                            </p>
-                          )}
+                      <div className="space-y-2.5 rounded-lg border bg-muted/20 p-3.5">
+                        <div className="flex items-center gap-2 text-sm font-semibold uppercase tracking-[0.06em] text-muted-foreground">
+                          <BookOpenText className="h-4 w-4 text-primary" />
+                          Extraction Details
                         </div>
-
-                        <div className="space-y-2.5 rounded-lg border bg-muted/20 p-3.5">
-                          <div className="flex items-center justify-between gap-2">
-                            <div className="flex items-center gap-2 text-sm font-semibold uppercase tracking-[0.06em] text-muted-foreground">
-                              {item.fda?.found ? (
-                                <ShieldCheck className="h-4 w-4 text-green-600" />
-                              ) : (
-                                <ShieldAlert className="h-4 w-4 text-amber-600" />
-                              )}
-                              FDA
-                            </div>
-                            <Badge variant="outline" className={`${getSourceStateClass(fdaStatus)} text-[11px]`}>
-                              {fdaStatus}
-                            </Badge>
-                          </div>
-                          {item.fda ? (
-                            <>
-                              {fdaBestMatch?.generic_name && <DetailRow label="Generic" value={fdaBestMatch.generic_name} />}
-                              {fdaBestMatch?.brand_name && <DetailRow label="Brand" value={fdaBestMatch.brand_name} />}
-                              {fdaBestMatch?.classification && <DetailRow label="Class" value={fdaBestMatch.classification} />}
-                              {fdaBestMatch?.registration_number && <DetailRow label="Reg." value={fdaBestMatch.registration_number} />}
-                              {item.fda.error && <p className="text-sm text-destructive">{item.fda.error}</p>}
-                              {!fdaBestMatch?.generic_name && !fdaBestMatch?.brand_name && !fdaBestMatch?.classification && !fdaBestMatch?.registration_number && !item.fda.error && !item.fda.error_code && (
-                                <p className="rounded-md border border-dashed border-border bg-card/60 px-2.5 py-2 text-sm text-muted-foreground">
-                                  {getSourceMissingMessage(fdaEnrichmentStatus, "FDA")}
-                                </p>
-                              )}
-                            </>
-                          ) : (
-                            <p className="rounded-md border border-dashed border-border bg-card/60 px-2.5 py-2 text-sm text-muted-foreground">
-                              {getSourceMissingMessage(fdaEnrichmentStatus, "FDA")}
-                            </p>
-                          )}
-                        </div>
-
-                        <div className="space-y-2.5 rounded-lg border bg-muted/20 p-3.5">
-                          <div className="flex items-center justify-between gap-2">
-                            <div className="flex items-center gap-2 text-sm font-semibold uppercase tracking-[0.06em] text-muted-foreground">
-                              <Pill className="h-4 w-4 text-accent" />
-                              PNDF
-                            </div>
-                            <Badge variant="outline" className={`${getSourceStateClass(pndfStatus)} text-[11px]`}>
-                              {pndfStatus}
-                            </Badge>
-                          </div>
-                          {item.pndf ? (
-                            <>
-                              {item.pndf.atc_code && <DetailRow label="ATC" value={item.pndf.atc_code} />}
-                              {dosageFormPreview.length > 0 && <DetailRow label="Forms" value={dosageFormPreview.join("; ")} />}
-                              {item.pndf.message && <p className="text-sm text-muted-foreground">{item.pndf.message}</p>}
-                              {item.pndf.error && <p className="text-sm text-destructive">{item.pndf.error}</p>}
-                              {!item.pndf.atc_code && dosageFormPreview.length === 0 && !item.pndf.message && !item.pndf.error && (
-                                <p className="rounded-md border border-dashed border-border bg-card/60 px-2.5 py-2 text-sm text-muted-foreground">
-                                  {getSourceMissingMessage(pndfEnrichmentStatus, "PNDF")}
-                                </p>
-                              )}
-                            </>
-                          ) : (
-                            <p className="rounded-md border border-dashed border-border bg-card/60 px-2.5 py-2 text-sm text-muted-foreground">
-                              {getSourceMissingMessage(pndfEnrichmentStatus, "PNDF")}
-                            </p>
-                          )}
-                        </div>
+                        {med?.dosage && <DetailRow label="Dosage" value={med.dosage} />}
+                        {med?.signa && <DetailRow label="Signa" value={med.signa} />}
+                        {med?.frequency && <DetailRow label="Frequency" value={med.frequency} />}
+                        {med?.match_method && <DetailRow label="Match" value={med.match_method} subtle />}
+                        {!med?.dosage && !med?.signa && !med?.frequency && !med?.match_method && (
+                          <p className="rounded-md border border-dashed border-border bg-card/60 px-2.5 py-2 text-sm text-muted-foreground">
+                            No extra OCR structure available.
+                          </p>
+                        )}
                       </div>
 
                       {patientSummary.sections.length > 0 && (
