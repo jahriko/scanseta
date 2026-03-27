@@ -6,7 +6,7 @@ This implementation adds three key post-processing techniques to the prescriptio
 
 1. **Candidate Matching** - Hybrid fuzzy matching using Levenshtein edit distance OR similarity threshold
 2. **Plausibility Screening** - Character-level n-gram language model for validation
-3. **Flagging** - Token-level flags (OOV, LOW_PLAUSIBILITY)
+3. **Flagging** - Token-level flags (OOV, LOW_PLAUSIBILITY for unmatched noise)
 
 ## Architecture
 
@@ -124,7 +124,7 @@ For each token:
 
 - Train character-level n-gram LM on lexicon
 - For each token, compute average log-probability per character
-- Flag if below threshold
+- Flag if below threshold and no canonical match was accepted
 
 ### 4. Flagging
 
@@ -135,7 +135,7 @@ For each token:
 
 Only tokens that pass enrichment gating are sent to FDA/PNDF enrichment.  
 Blocked flags: `OOV`, `PARSE_ERROR`, `POST_PROCESS_ERROR`, `NO_POST_PROCESSOR`.  
-Structured model output may bypass `LOW_PLAUSIBILITY`, but not `OOV`.
+Structured model output may bypass `LOW_PLAUSIBILITY`, but not `OOV`. Exact and accepted fuzzy matches should not emit `LOW_PLAUSIBILITY`.
 
 ## Examples
 
@@ -207,7 +207,8 @@ Logs include:
 1. **main.py**: 
    - Imports and initializes `DrugPostProcessor`
    - Enhanced `parse_prescription_text()` function
-   - Updated both `/scan` and `/scan-batch` endpoints
+   - Powers the single-image `/scan` flow used by the frontend
+   - `/scan-batch` remains a backend/manual endpoint and is not part of the main UI flow
    - Integrates FDA verification (primary) and PNDF enrichment (always)
 
 2. **MedicationInfo**: Extended with 6 new optional fields (backward-compatible)

@@ -118,7 +118,7 @@ Base URL: `http://localhost:8000`
 - `GET /model-status` - detailed model status
 - `GET /load-model` - load/reload model
 - `POST /scan` - scan one prescription image
-- `POST /scan-batch` - scan multiple prescription images
+- `POST /scan-batch` - scan multiple prescription images (backend/manual; current frontend uses `/scan`)
 - `POST /enrich-medications` - enrich manually provided medication names
 
 Examples:

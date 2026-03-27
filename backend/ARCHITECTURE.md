@@ -1,5 +1,8 @@
 # Drug Verification Architecture - FDA Primary + PNDF Secondary
 
+Current product path: the frontend uses single-image `POST /scan`; `POST /scan-batch` remains a backend/manual endpoint.
+`/scan` returns parsed OCR output immediately and enrichment continues via job status updates.
+
 ## System Architecture Diagram
 
 ```
