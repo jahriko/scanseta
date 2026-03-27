@@ -66,6 +66,7 @@ app.add_middleware(
 class MedicationInfo(BaseModel):
     name: str
     dosage: Optional[str] = None
+    quantity: Optional[str] = None
     signa: Optional[str] = None
     frequency: Optional[str] = None
     confidence: float
@@ -726,7 +727,11 @@ class ModelConfig:
                         "text": " ".join([
                             "You are a medical prescription OCR extraction engine.",
                             "Return ONLY valid JSON with this exact top-level schema:",
-                            '{"patient":{"name":null,"sex":null,"age":null},"doctor_name":null,"date":null,"medications":[{"name":"","dosage":null,"signa":null,"frequency":null}]}.',
+                            '{"patient":{"name":null,"sex":null,"age":null},"doctor_name":null,"date":null,"medications":[{"name":"","dosage":null,"quantity":null,"signa":null,"frequency":null}]}.',
+                            "Field definitions: dosage = strength or amount per dose (e.g. '500mg', '1 tablet').",
+                            "quantity = number of units to dispense, written as #N on the prescription (e.g. '#30', '#10').",
+                            "signa = administration instructions or directions (e.g. 'take 1 tab twice daily', 'apply topically').",
+                            "frequency = how often the medication is taken (e.g. 'OD', 'BID', 'TID', 'every 8 hours').",
                             "Use null for unknown values. Include all medications you can read.",
                             "Do not add markdown, prose, or code fences."
                         ])
@@ -1975,12 +1980,14 @@ def _extract_partial_structured_output(raw_text: str) -> Dict[str, Any]:
 
             window = meds_section[match.end() : match.end() + 320]
             dosage = _extract_with_pattern(r'"dosage"\s*:\s*"([^"]*)"', window)
+            quantity = _extract_with_pattern(r'"quantity"\s*:\s*"([^"]*)"', window)
             signa = _extract_with_pattern(r'"(?:signa|sig)"\s*:\s*"([^"]*)"', window)
             frequency = _extract_with_pattern(r'"frequency"\s*:\s*"([^"]*)"', window)
             medications.append(
                 _build_medication_info(
                     token=name,
                     dosage=dosage,
+                    quantity=quantity,
                     signa=signa,
                     frequency=frequency,
                     base_flags=["STRUCTURED_JSON_PARTIAL"],
@@ -1997,14 +2004,28 @@ def _extract_partial_structured_output(raw_text: str) -> Dict[str, Any]:
     }
 
 
+_QUANTITY_PATTERN = re.compile(r'^#\s*\d+$')
+
+def _normalize_quantity_and_signa(
+    quantity: Optional[str],
+    signa: Optional[str],
+) -> tuple[Optional[str], Optional[str]]:
+    """Move #N values misplaced in signa into quantity."""
+    if signa and _QUANTITY_PATTERN.match(signa.strip()):
+        return quantity or signa.strip(), None
+    return quantity, signa
+
+
 def _build_medication_info(
     token: str,
     dosage: Optional[str] = None,
+    quantity: Optional[str] = None,
     signa: Optional[str] = None,
     frequency: Optional[str] = None,
     base_flags: Optional[List[str]] = None,
 ) -> MedicationInfo:
     flags = list(base_flags or [])
+    quantity, signa = _normalize_quantity_and_signa(quantity, signa)
     if post_processor:
         try:
             result = post_processor.process_token(token)
@@ -2013,6 +2034,7 @@ def _build_medication_info(
             return MedicationInfo(
                 name=final_name,
                 dosage=dosage,
+                quantity=quantity,
                 signa=signa,
                 frequency=frequency,
                 confidence=0.9,
@@ -2032,6 +2054,7 @@ def _build_medication_info(
     return MedicationInfo(
         name=token,
         dosage=dosage,
+        quantity=quantity,
         signa=signa,
         frequency=frequency,
         confidence=0.9,
@@ -2106,6 +2129,7 @@ def parse_model_output(raw_text: str) -> Dict[str, Any]:
                 _build_medication_info(
                     token=name,
                     dosage=_clean_optional_str(item.get("dosage")),
+                    quantity=_clean_optional_str(item.get("quantity")),
                     signa=_clean_optional_str(item.get("signa") or item.get("sig")),
                     frequency=_clean_optional_str(item.get("frequency")),
                     base_flags=["STRUCTURED_JSON"],

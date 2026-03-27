@@ -7,6 +7,7 @@ const API_BASE_URL = config.apiBaseUrl;
 export interface Medication {
   name: string;
   dosage?: string | null;
+  quantity?: string | null;
   signa?: string | null;
   frequency?: string | null;
   confidence: number;
