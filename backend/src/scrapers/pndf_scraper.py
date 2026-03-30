@@ -1,42 +1,318 @@
 """
 Philippine National Drug Formulary (PNDF) Web Scraper
 Fetches and parses medication information from https://pnf.doh.gov.ph/
-Uses Playwright to handle JavaScript-rendered content (Next.js with Radix dialogs)
+
+Uses patchright (anti-detection Playwright fork) with headless=False to bypass
+Cloudflare WAF. The browser window is positioned off-screen so it is invisible
+to the user while still passing CF's bot-detection checks.
 """
 
-import logging
 import asyncio
+import json
+import logging
 import os
+<<<<<<< HEAD
+import urllib.parse
+from datetime import datetime
+from pathlib import Path
+from typing import Dict, List, Optional
+
+=======
 from pathlib import Path
 from typing import List, Dict, Optional, Tuple
 from datetime import datetime, timedelta
 from bs4 import BeautifulSoup
 import re
+>>>>>>> d051e7d6b3726db590b9f026cd179df9d0975181
 from .cache_utils import load_cache, normalize_key, save_cache, upsert_cache_entry
 
 logger = logging.getLogger(__name__)
 
 try:
-    from playwright.async_api import async_playwright, Browser, Page, TimeoutError as PlaywrightTimeoutError
-    PLAYWRIGHT_AVAILABLE = True
+    from patchright.sync_api import sync_playwright
+    PATCHRIGHT_AVAILABLE = True
 except ImportError:
-    PLAYWRIGHT_AVAILABLE = False
-    logger.warning("Playwright not installed. Install with: pip install playwright && playwright install chromium")
+    PATCHRIGHT_AVAILABLE = False
+    logger.warning(
+        "patchright not installed. Install with: pip install patchright && patchright install chromium"
+    )
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 CACHE_DIR = PROJECT_ROOT / "data"
 CACHE_PATH = CACHE_DIR / "pndf_cache.json"
-PNDF_BASE_URL = "https://pnf.doh.gov.ph"
+FRONTEND_URL = "https://pnf.doh.gov.ph/"
+TIMEOUT = 60_000
 
-# Cloudflare bypass: Set to False to avoid detection (browser window will be visible)
-# Set PNDF_HEADLESS=false environment variable to run in visible mode
-PNDF_HEADLESS = os.getenv("PNDF_HEADLESS", "true").lower() != "false"
-PNDF_SAVE_DEBUG_HTML = os.getenv("PNDF_SAVE_DEBUG_HTML", "false").lower() == "true"
 
+# ---------------------------------------------------------------------------
+# Core sync scraper (runs in a thread pool to keep the async API intact)
+# ---------------------------------------------------------------------------
+
+def _scrape_drug_sync(drug_name: str) -> List[Dict]:
+    """
+    Synchronous core: launches patchright Chromium off-screen, performs the
+    search, expands each accordion result, and returns a list of raw dicts.
+
+    Each dict has: id (str|None), name (str), details (dict[str,str]).
+    """
+    search_data: dict = {"body": None}
+
+    with sync_playwright() as p:
+        browser = p.chromium.launch(
+            headless=False,
+            args=["--window-position=-10000,-10000"],
+        )
+        page = browser.new_page(viewport={"width": 1280, "height": 800})
+
+        def on_response(response):
+            if (
+                "pnf-api.doh.gov.ph/api/home" in response.url
+                and "globalSearch=" in response.url
+            ):
+                term = urllib.parse.unquote(
+                    response.url.split("globalSearch=")[-1].split("&")[0]
+                )
+                if term.lower() == drug_name.lower():
+                    try:
+                        search_data["body"] = json.loads(response.body())
+                        logger.debug(f"[pndf] Got search results for '{term}'")
+                    except Exception as exc:
+                        logger.warning(f"[pndf] Response parse error: {exc}")
+
+        page.on("response", on_response)
+
+        try:
+            logger.info(f"[pndf] Loading {FRONTEND_URL} …")
+            page.goto(FRONTEND_URL, wait_until="networkidle", timeout=TIMEOUT)
+            logger.info(f"[pndf] Page loaded: {page.title()}")
+
+            # --- Dismiss disclaimer modal ---
+            try:
+                page.wait_for_selector(
+                    "div[role='dialog'][data-state='open']",
+                    state="visible",
+                    timeout=8_000,
+                )
+                close_btn = page.locator("button[data-slot='close-button']")
+                if close_btn.count() and close_btn.is_visible():
+                    close_btn.first.click()
+                else:
+                    page.keyboard.press("Escape")
+                page.wait_for_selector(
+                    "div[data-slot='dialog-overlay']",
+                    state="hidden",
+                    timeout=8_000,
+                )
+                logger.debug("[pndf] Modal dismissed.")
+            except Exception:
+                page.keyboard.press("Escape")
+                page.wait_for_timeout(500)
+
+            # --- Type drug name (keyboard.type triggers React's debounced search) ---
+            logger.info(f"[pndf] Searching for '{drug_name}' …")
+            search_input = page.locator("#inputGlobalSearch")
+            search_input.wait_for(state="visible", timeout=10_000)
+            search_input.click()
+            page.keyboard.type(drug_name, delay=100)
+
+            # --- Poll for API response ---
+            logger.info("[pndf] Waiting for API response …")
+            for _ in range(20):
+                page.wait_for_timeout(1_000)
+                if search_data["body"] is not None:
+                    break
+
+            if search_data["body"] is None:
+                logger.warning(f"[pndf] No search response received for '{drug_name}'.")
+                return []
+
+            drug_ids = _extract_drug_list(search_data["body"])
+            logger.info(f"[pndf] {len(drug_ids)} result(s) found.")
+            if not drug_ids:
+                return []
+
+            # --- Wait for result cards ---
+            try:
+                page.wait_for_selector(
+                    "div.w-full.group > button",
+                    state="visible",
+                    timeout=30_000,
+                )
+            except Exception:
+                logger.warning("[pndf] Result buttons not found. Returning IDs only.")
+                return drug_ids
+
+            # --- Wait for sync spinner to finish ---
+            try:
+                page.wait_for_selector(
+                    "text=Syncing pharmacopoeia data",
+                    state="hidden",
+                    timeout=60_000,
+                )
+            except Exception:
+                pass
+
+            # --- Expand each accordion item ---
+            results = []
+            item_groups = page.locator("div.w-full.group")
+            count = item_groups.count()
+            logger.info(f"[pndf] Expanding {count} item(s) …")
+
+            for i in range(count):
+                group = item_groups.nth(i)
+                btn = group.locator("button").first
+                drug_name_text = btn.locator("h3").inner_text().strip()
+
+                btn.click()
+                detail_selector = "div.px-4.py-4"
+                try:
+                    group.locator(detail_selector).wait_for(
+                        state="visible", timeout=15_000
+                    )
+                except Exception:
+                    page.wait_for_timeout(2_000)
+
+                detail_el = group.locator(detail_selector)
+                if detail_el.count() > 0:
+                    panel_text = detail_el.first.inner_text().strip()
+                else:
+                    panel_text = group.inner_text().strip()
+                    if panel_text.startswith(drug_name_text):
+                        panel_text = panel_text[len(drug_name_text):].strip()
+
+                entry = _parse_panel(drug_name_text, panel_text)
+                if i < len(drug_ids):
+                    entry["id"] = drug_ids[i].get("id")
+
+                results.append(entry)
+
+                btn.click()
+                page.wait_for_timeout(300)
+
+            return results
+
+        finally:
+            browser.close()
+
+
+def _extract_drug_list(body) -> List[Dict]:
+    if isinstance(body, list):
+        for item in body:
+            if isinstance(item, dict) and "drugGenerics" in item:
+                return item["drugGenerics"]
+    if isinstance(body, dict):
+        return body.get("drugGenerics", [])
+    return []
+
+
+def _parse_panel(name: str, panel: str) -> Dict:
+    """Parse the accordion detail panel text into a flat key→value dict."""
+    result: Dict = {"name": name, "details": {}}
+    if not panel:
+        return result
+
+    lines = [line.strip() for line in panel.splitlines() if line.strip()]
+    current_key = None
+    current_vals: List[str] = []
+
+    for line in lines:
+        if ":" in line and len(line.split(":")[0]) < 60:
+            if current_key:
+                result["details"][current_key] = " ".join(current_vals).strip()
+            parts = line.split(":", 1)
+            current_key = parts[0].strip()
+            current_vals = [parts[1].strip()] if len(parts) > 1 and parts[1].strip() else []
+        else:
+            if current_key:
+                current_vals.append(line)
+
+    if current_key:
+        result["details"][current_key] = " ".join(current_vals).strip()
+
+    if not result["details"]:
+        result["raw"] = panel
+
+    return result
+
+
+def _details_to_enrichment(raw: Dict) -> Dict:
+    """
+    Convert the raw scrape result (name + details flat dict) into the
+    structured dict expected by PNDFEnrichmentItem in main.py.
+    """
+    details: Dict = raw.get("details", {})
+
+    def get(*keys: str) -> Optional[str]:
+        for k in keys:
+            for dk, dv in details.items():
+                if dk.strip().lower() == k.lower() and dv:
+                    return dv
+        return None
+
+    # Dosage forms: plain text value split into list items
+    raw_dosage = get("Dosage Form(s)", "Dosage Forms", "Dosage Form")
+    dosage_forms = []
+    if raw_dosage:
+        for part in raw_dosage.split(","):
+            part = part.strip()
+            if part:
+                dosage_forms.append({"form": part})
+
+    # ATC code: may appear as "ATC Code" key or embedded value like "R03AC02"
+    atc_raw = get("ATC Code", "ATC")
+    atc_code = None
+    if atc_raw:
+        import re
+        m = re.search(r"[A-Z]\d{2}[A-Z]{2}\d{2}", atc_raw)
+        atc_code = m.group(0) if m else atc_raw.strip()
+
+    classification = {
+        "anatomical": get("Anatomical"),
+        "therapeutic": get("Therapeutic"),
+        "pharmacological": get("Pharmacological"),
+        "chemical_class": get("Chemical Class"),
+    }
+    # Omit classification block if all fields are empty
+    if not any(classification.values()):
+        classification = None
+
+    return {
+        "name": raw.get("name", ""),
+        "found": True,
+        "atc_code": atc_code,
+        "classification": classification,
+        "dosage_forms": dosage_forms,
+        "indications": get("Indications", "Indication"),
+        "contraindications": get("Contraindications", "Contraindication"),
+        "precautions": get("Precautions", "Precaution"),
+        "adverse_reactions": get(
+            "Adverse Drug Reactions", "Adverse Reactions", "Adverse Effects"
+        ),
+        "drug_interactions": get("Drug Interactions", "Drug Interaction"),
+        "mechanism_of_action": get("Mechanism of Action", "Mechanism"),
+        "dosage_instructions": get("Dosage", "Dosage Instructions", "Dosing"),
+        "administration": get("Administration", "Route of Administration"),
+        "pregnancy_category": get("Pregnancy Category", "Pregnancy"),
+        "scraped_at": datetime.now().isoformat(),
+    }
+
+
+# ---------------------------------------------------------------------------
+# PNDFScraper — async public API (same interface as the original class)
+# ---------------------------------------------------------------------------
 
 class PNDFScraper:
-    """Scraper for Philippine National Drug Formulary using Playwright for JS-rendered content"""
+    """
+    Async scraper for the Philippine National Drug Formulary.
 
+    Internally runs patchright in a thread pool so the blocking browser
+    interaction doesn't block the FastAPI event loop.
+    """
+
+<<<<<<< HEAD
+    REQUEST_DELAY = 0.5
+    CACHE_TTL_SECONDS = int(os.getenv("PNDF_CACHE_TTL_SECONDS", "0"))
+=======
     # Request delay (seconds) between searches to respect server
     REQUEST_DELAY = float(os.getenv("PNDF_REQUEST_DELAY_SECONDS", "0.1"))
     LOOKUP_CONCURRENCY = max(1, int(os.getenv("PNDF_LOOKUP_CONCURRENCY", "2")))
@@ -65,12 +341,18 @@ class PNDFScraper:
             "error_code": error_code,
             "scraped_at": datetime.now().isoformat(),
         }
+>>>>>>> d051e7d6b3726db590b9f026cd179df9d0975181
 
     @staticmethod
     def _cache_key(entry: Dict) -> Optional[str]:
         return entry.get("name")
 
     @staticmethod
+<<<<<<< HEAD
+    async def search_drug(drug_name: str) -> Optional[Dict]:
+        """
+        Search for a single drug name on pnf.doh.gov.ph.
+=======
     def _safe_filename(value: str) -> str:
         safe = re.sub(r"[^a-zA-Z0-9._-]+", "_", value.strip())
         return safe.strip("._") or "query"
@@ -256,28 +538,25 @@ class PNDFScraper:
                 error_code="playwright_unavailable",
                 message="Scraper runtime unavailable",
             )
+>>>>>>> d051e7d6b3726db590b9f026cd179df9d0975181
 
-        page = None
-        context = None
-        try:
-            browser = await PNDFScraper._get_browser()
-            
-            # Create a context with realistic user agent and settings to avoid Cloudflare detection
-            context = await browser.new_context(
-                user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-                viewport={"width": 1920, "height": 1080},
-                extra_http_headers={
-                    'Accept-Language': 'en-US,en;q=0.9',
-                    'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
-                    'Accept-Encoding': 'gzip, deflate, br',
-                    'DNT': '1',
-                    'Connection': 'keep-alive',
-                    'Upgrade-Insecure-Requests': '1',
-                    'Sec-Fetch-Dest': 'document',
-                    'Sec-Fetch-Mode': 'navigate',
-                    'Sec-Fetch-Site': 'none',
-                }
+        Returns a dict compatible with PNDFEnrichmentItem, or None if not found.
+        """
+        if not PATCHRIGHT_AVAILABLE:
+            logger.error(
+                "patchright not installed. Run: pip install patchright && patchright install chromium"
             )
+<<<<<<< HEAD
+            return None
+
+        try:
+            loop = asyncio.get_event_loop()
+            raw_results: List[Dict] = await loop.run_in_executor(
+                None, _scrape_drug_sync, drug_name
+            )
+        except Exception as exc:
+            logger.error(f"[pndf] Error scraping '{drug_name}': {exc}")
+=======
             
             page = await context.new_page()
             
@@ -722,18 +1001,23 @@ class PNDFScraper:
 
         except Exception as e:
             logger.error(f"Error parsing drug page: {e}")
+>>>>>>> d051e7d6b3726db590b9f026cd179df9d0975181
             return None
+
+        if not raw_results:
+            return None
+
+        # Return the first (best) match converted to enrichment format
+        return _details_to_enrichment(raw_results[0])
 
     @staticmethod
     async def load_cache() -> List[Dict]:
-        """Load cached PNDF data from disk"""
         cache = await load_cache(CACHE_PATH, ttl_seconds=PNDFScraper.CACHE_TTL_SECONDS)
         logger.info(f"Loaded PNDF cache with {len(cache)} drugs")
         return cache
 
     @staticmethod
     async def save_cache(data: List[Dict]) -> None:
-        """Persist PNDF data to disk"""
         saved = await save_cache(CACHE_PATH, data, key_fn=PNDFScraper._cache_key)
         logger.info(f"Saved PNDF cache with {len(saved)} drugs")
 
@@ -742,13 +1026,16 @@ class PNDFScraper:
         drug_names: List[str], cache: Optional[List[Dict]] = None
     ) -> List[Dict]:
         """
-        Enrich medication list with PNDF data
-        Uses cache first, then searches live if not found
+        Enrich a list of drug names with PNDF data.
+        Checks cache first; scrapes live for misses.
         """
         if cache is None:
             cache = await PNDFScraper.load_cache()
 
+<<<<<<< HEAD
+=======
         enriched: List[Dict] = [{"name": drug_name, "found": False} for drug_name in drug_names]
+>>>>>>> d051e7d6b3726db590b9f026cd179df9d0975181
         cache_dict = {
             normalize_key(drug.get("name", "")): drug
             for drug in cache
@@ -756,6 +1043,49 @@ class PNDFScraper:
         }
         pending: List[Tuple[int, str, str]] = []
 
+<<<<<<< HEAD
+        enriched = []
+        for drug_name in drug_names:
+            key = normalize_key(drug_name)
+            cached = cache_dict.get(key)
+            if cached:
+                enriched.append(cached)
+                logger.info(f"[pndf] Cache hit: {drug_name}")
+            else:
+                logger.info(f"[pndf] Cache miss, scraping: {drug_name}")
+                try:
+                    drug_info = await PNDFScraper.search_drug(drug_name)
+                    if drug_info:
+                        enriched.append(drug_info)
+                        cache = await upsert_cache_entry(
+                            CACHE_PATH, drug_info, key_fn=PNDFScraper._cache_key
+                        )
+                        cache_dict[key] = drug_info
+                    else:
+                        error_code = (
+                            "patchright_unavailable"
+                            if not PATCHRIGHT_AVAILABLE
+                            else "not_found"
+                        )
+                        enriched.append({
+                            "name": drug_name,
+                            "found": False,
+                            "message": (
+                                "Scraper runtime unavailable"
+                                if error_code == "patchright_unavailable"
+                                else "Not found in PNDF database"
+                            ),
+                            "error_code": error_code,
+                        })
+                except Exception as exc:
+                    logger.error(f"[pndf] Error enriching '{drug_name}': {exc}")
+                    enriched.append({
+                        "name": drug_name,
+                        "found": False,
+                        "error": str(exc),
+                        "error_code": "scrape_error",
+                    })
+=======
         for idx, drug_name in enumerate(drug_names):
             drug_name_key = normalize_key(drug_name)
 
@@ -853,6 +1183,7 @@ class PNDFScraper:
                             "error_code": "scrape_error",
                             "scraped_at": datetime.now().isoformat(),
                         }
+>>>>>>> d051e7d6b3726db590b9f026cd179df9d0975181
 
                     if PNDFScraper.REQUEST_DELAY > 0:
                         await asyncio.sleep(PNDFScraper.REQUEST_DELAY)
@@ -863,10 +1194,7 @@ class PNDFScraper:
 
     @staticmethod
     async def refresh_cache(drugs_to_fetch: Optional[List[str]] = None) -> None:
-        """
-        Refresh PNDF cache with fresh data
-        If drugs_to_fetch is provided, only fetch those; otherwise fetch common drugs
-        """
+        """Pre-warm the cache for a list of common drugs."""
         default_drugs = [
             "paracetamol",
             "ibuprofen",
@@ -879,9 +1207,8 @@ class PNDFScraper:
             "loratadine",
             "cetirizine",
         ]
-
         drugs = drugs_to_fetch or default_drugs
-        logger.info(f"Starting PNDF cache refresh for {len(drugs)} drugs...")
+        logger.info(f"[pndf] Starting cache refresh for {len(drugs)} drugs …")
 
         cache = await PNDFScraper.load_cache()
         cache_dict = {
@@ -891,30 +1218,30 @@ class PNDFScraper:
         }
 
         for drug_name in drugs:
-            drug_name_key = normalize_key(drug_name)
-            if drug_name_key not in cache_dict:
+            if normalize_key(drug_name) not in cache_dict:
                 try:
                     drug_info = await PNDFScraper.search_drug(drug_name)
                     if drug_info:
                         cache = await upsert_cache_entry(
-                            CACHE_PATH,
-                            drug_info,
-                            key_fn=PNDFScraper._cache_key,
+                            CACHE_PATH, drug_info, key_fn=PNDFScraper._cache_key
                         )
-                        cache_dict[drug_name_key] = drug_info
-                except Exception as e:
-                    logger.error(f"Error fetching {drug_name}: {e}")
+                        cache_dict[normalize_key(drug_name)] = drug_info
+                except Exception as exc:
+                    logger.error(f"[pndf] Error refreshing '{drug_name}': {exc}")
 
-                # Respect server load
                 await asyncio.sleep(PNDFScraper.REQUEST_DELAY)
 
-        await PNDFScraper.save_cache(list(cache_dict.values()))
-        logger.info(f"Cache refresh complete. Total drugs: {len(cache_dict)}")
+        logger.info(f"[pndf] Cache refresh complete. Total: {len(cache_dict)} drugs.")
 
     @staticmethod
     async def cleanup():
+<<<<<<< HEAD
+        """No-op: patchright browser is opened/closed per search call."""
+        logger.info("[pndf] PNDF scraper cleanup complete (nothing to close).")
+=======
         """Clean up browser resources (call on server shutdown)"""
         await PNDFScraper._close_browser()
         PNDFScraper._negative_cache.clear()
         logger.info("PNDF scraper cleanup complete")
 
+>>>>>>> d051e7d6b3726db590b9f026cd179df9d0975181
