@@ -202,14 +202,40 @@ def _parse_panel(name: str, panel: str) -> Dict:
     return result
 
 
+def _extract_section(text: str, section: str) -> Optional[str]:
+    """
+    Extract a named section from a run-on text block.
+    Looks for 'SectionName <content> NextSection' patterns.
+    """
+    # Build pattern: section header followed by content up to the next known header
+    known_headers = (
+        r"Indications|Contraindications|Precautions|Adverse Drug Reactions|"
+        r"Drug Interactions|Mechanism of Action|Pregnancy|Dosage|Administration"
+    )
+    pattern = rf"(?<!\w){re.escape(section)}\s+(.+?)(?=\s+(?:{known_headers})(?:\s|$)|$)"
+    m = re.search(pattern, text, re.IGNORECASE | re.DOTALL)
+    if m:
+        return m.group(1).strip()
+    return None
+
+
 def _details_to_enrichment(raw: Dict) -> Dict:
     details: Dict = raw.get("details", {})
 
+    # Flatten all detail values into one big text block for fallback extraction
+    full_text = " ".join(str(v) for v in details.values() if v)
+
     def get(*keys: str) -> Optional[str]:
+        # First try exact key match in details dict
         for k in keys:
             for dk, dv in details.items():
                 if dk.strip().lower() == k.lower() and dv:
                     return dv
+        # Fallback: extract from full text blob
+        for k in keys:
+            val = _extract_section(full_text, k)
+            if val:
+                return val
         return None
 
     raw_dosage = get("Dosage Form(s)", "Dosage Forms", "Dosage Form")
@@ -275,7 +301,13 @@ class PNDFScraper:
             return None
         if not raw_results:
             return None
-        return _details_to_enrichment(raw_results[0])
+        # Prefer the result whose name matches the search term
+        key = drug_name.strip().lower()
+        match = next(
+            (r for r in raw_results if r.get("name", "").strip().lower() == key),
+            raw_results[0],
+        )
+        return _details_to_enrichment(match)
 
     @staticmethod
     async def load_cache() -> List[Dict]:
