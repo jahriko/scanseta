@@ -4,7 +4,7 @@ Scanseta is a prescription scanning system with:
 - A React + TypeScript frontend for uploading prescription images and viewing extracted data.
 - A FastAPI backend for OCR extraction, medication parsing, FDA verification, and PNDF enrichment.
 
-## Monorepo Overview
+## Monorepo Overvieww
 
 - `frontend/`: Vite + React + TypeScript application.
 - `backend/`: FastAPI API and ML/scraper pipeline.
