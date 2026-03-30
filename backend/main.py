@@ -112,6 +112,7 @@ class PNDFEnrichmentItem(BaseModel):
     dosage_instructions: Optional[str] = None
     administration: Optional[str] = None
     pregnancy_category: Optional[str] = None
+    note: Optional[str] = None
     message: Optional[str] = None
     error: Optional[str] = None
     error_code: Optional[str] = None

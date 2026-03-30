@@ -276,6 +276,7 @@ def _details_to_enrichment(raw: Dict) -> Dict:
         "dosage_instructions": get("Dosage", "Dosage Instructions", "Dosing"),
         "administration": get("Administration", "Route of Administration"),
         "pregnancy_category": get("Pregnancy Category", "Pregnancy"),
+        "note": get("NOTE", "Note"),
         "scraped_at": datetime.now().isoformat(),
     }
 
