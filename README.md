@@ -92,6 +92,19 @@ npm run check-env
   - `PNDF_NEGATIVE_CACHE_TTL_SECONDS`
   - `SCAN_RESULT_CACHE_TTL_SECONDS`
   - `SCAN_RESULT_CACHE_MAX_ENTRIES`
+  - `ENRICHMENT_JOB_TTL_SECONDS`
+  - `ENRICHMENT_FDA_TIMEOUT_SECONDS`
+  - `ENRICHMENT_PNDF_TIMEOUT_SECONDS`
+  - `ENRICHMENT_MAX_DRUGS`
+  - `ENRICHMENT_PERSIST_DEBOUNCE_SECONDS`
+
+### Post-Processing Summary
+
+- The backend tries structured model JSON parsing before falling back to OCR token parsing.
+- Medication names are canonicalized against `backend/data/drug_lexicon.txt` using conservative fuzzy matching.
+- Ambiguous fuzzy matches abstain instead of forcing a correction.
+- `OOV` medications are blocked from FDA/PNDF enrichment.
+- `/scan` returns immediately and queues FDA/PNDF enrichment in a background job when valid medication candidates are found.
 
 ### Build Lexicon from PH Sources (via local PNDF/FDA cache)
 
@@ -117,9 +130,19 @@ Base URL: `http://localhost:8000`
 - `GET /health` - health status and model/device info
 - `GET /model-status` - detailed model status
 - `GET /load-model` - load/reload model
-- `POST /scan` - scan one prescription image
+- `POST /scan` - scan one prescription image and queue background enrichment when possible
 - `POST /scan-batch` - scan multiple prescription images (backend/manual; current frontend uses `/scan`)
-- `POST /enrich-medications` - enrich manually provided medication names
+- `POST /enrich-medications` - enrich manually provided medication names synchronously
+- `POST /enrichment-jobs` - create an async enrichment job for manually provided medication names
+- `GET /enrichment-jobs/{job_id}` - fetch current async enrichment job status
+- `GET /enrichment-jobs/{job_id}/results` - fetch current async enrichment job results
+- `POST /enrichment-jobs/{job_id}/retry` - retry an async enrichment job, optionally by source
+
+Notes:
+
+- `/scan` returns parsed medications immediately, with enrichment status fields such as `enrichment_job_id`, `enrichment_status`, `fda_enrichment_status`, and `pndf_enrichment_status`.
+- `fda_verification` and `pndf_enriched` may be empty on the initial `/scan` response if the background job has only been queued.
+- `POST /enrich-medications` still performs FDA + PNDF enrichment in the request/response cycle.
 
 Examples:
 
