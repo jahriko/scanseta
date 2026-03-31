@@ -1,7 +1,9 @@
 {
   "permissions": {
     "allow": [
-      "Bash(find /c/Users/Jahriko/desktop/scanseta -type f -name *.json -not -path */.venv/* -not -path */node_modules/*)"
+      "Bash(find /c/Users/Jahriko/desktop/scanseta -type f -name *.json -not -path */.venv/* -not -path */node_modules/*)",
+      "Bash(find /c/Users/Jahriko/desktop/scanseta -type f -name *.json -not -path */.venv/* -not -path */node_modules/*) | head -n 10"
     ]
   }
 }
+
