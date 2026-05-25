@@ -1,6 +1,6 @@
 import { useState } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { Scan, FileText, AlertCircle, ChevronDown, User, UserCheck, Calendar, CheckCircle2, XCircle, Clock } from "lucide-react";
+import { Scan, FileText, AlertCircle, ChevronDown, User, CheckCircle2, XCircle, Clock } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { Collapsible, CollapsibleContent, CollapsibleTrigger } from "@/components/ui/collapsible";
 import {
@@ -119,21 +119,12 @@ const DetailGrid = ({ med }: { med: Medication }) => {
 // ─── prescription meta strip ─────────────────────────────────────────────────
 
 const PrescriptionMeta = ({ results }: { results: PrescriptionResponse }) => {
-  const hasAny = results.patient_name || results.patient_age || results.patient_sex || results.doctor_name || results.date;
+  const hasAny = results.patient_age || results.patient_sex;
   if (!hasAny) return null;
 
   return (
     <div className="rounded-lg bg-muted/40 px-4 py-3">
       <div className="flex flex-wrap gap-x-6 gap-y-2">
-        {results.patient_name && (
-          <div className="flex items-center gap-1.5 min-w-0">
-            <User className="h-3.5 w-3.5 shrink-0 text-muted-foreground/60" />
-            <div className="min-w-0">
-              <p className="text-[10px] font-semibold uppercase tracking-[0.07em] text-muted-foreground/60">Patient</p>
-              <p className="text-sm font-medium text-foreground truncate">{results.patient_name}</p>
-            </div>
-          </div>
-        )}
         {results.patient_age && (
           <div className="flex items-center gap-1.5 min-w-0">
             <User className="h-3.5 w-3.5 shrink-0 text-muted-foreground/60" />
@@ -149,24 +140,6 @@ const PrescriptionMeta = ({ results }: { results: PrescriptionResponse }) => {
             <div className="min-w-0">
               <p className="text-[10px] font-semibold uppercase tracking-[0.07em] text-muted-foreground/60">Sex</p>
               <p className="text-sm font-medium text-foreground">{results.patient_sex}</p>
-            </div>
-          </div>
-        )}
-        {results.doctor_name && (
-          <div className="flex items-center gap-1.5 min-w-0">
-            <UserCheck className="h-3.5 w-3.5 shrink-0 text-muted-foreground/60" />
-            <div className="min-w-0">
-              <p className="text-[10px] font-semibold uppercase tracking-[0.07em] text-muted-foreground/60">Prescriber</p>
-              <p className="text-sm font-medium text-foreground truncate">{results.doctor_name}</p>
-            </div>
-          </div>
-        )}
-        {results.date && (
-          <div className="flex items-center gap-1.5 min-w-0">
-            <Calendar className="h-3.5 w-3.5 shrink-0 text-muted-foreground/60" />
-            <div className="min-w-0">
-              <p className="text-[10px] font-semibold uppercase tracking-[0.07em] text-muted-foreground/60">Date</p>
-              <p className="text-sm font-medium text-foreground">{results.date}</p>
             </div>
           </div>
         )}
