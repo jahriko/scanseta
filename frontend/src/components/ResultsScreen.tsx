@@ -119,7 +119,7 @@ const DetailGrid = ({ med }: { med: Medication }) => {
 // ─── prescription meta strip ─────────────────────────────────────────────────
 
 const PrescriptionMeta = ({ results }: { results: PrescriptionResponse }) => {
-  const hasAny = results.patient_name || results.doctor_name || results.date;
+  const hasAny = results.patient_name || results.patient_age || results.patient_sex || results.doctor_name || results.date;
   if (!hasAny) return null;
 
   return (
@@ -131,6 +131,24 @@ const PrescriptionMeta = ({ results }: { results: PrescriptionResponse }) => {
             <div className="min-w-0">
               <p className="text-[10px] font-semibold uppercase tracking-[0.07em] text-muted-foreground/60">Patient</p>
               <p className="text-sm font-medium text-foreground truncate">{results.patient_name}</p>
+            </div>
+          </div>
+        )}
+        {results.patient_age && (
+          <div className="flex items-center gap-1.5 min-w-0">
+            <User className="h-3.5 w-3.5 shrink-0 text-muted-foreground/60" />
+            <div className="min-w-0">
+              <p className="text-[10px] font-semibold uppercase tracking-[0.07em] text-muted-foreground/60">Age</p>
+              <p className="text-sm font-medium text-foreground">{results.patient_age}</p>
+            </div>
+          </div>
+        )}
+        {results.patient_sex && (
+          <div className="flex items-center gap-1.5 min-w-0">
+            <User className="h-3.5 w-3.5 shrink-0 text-muted-foreground/60" />
+            <div className="min-w-0">
+              <p className="text-[10px] font-semibold uppercase tracking-[0.07em] text-muted-foreground/60">Sex</p>
+              <p className="text-sm font-medium text-foreground">{results.patient_sex}</p>
             </div>
           </div>
         )}
