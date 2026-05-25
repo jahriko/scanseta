@@ -105,8 +105,8 @@ const getRightPanelMeta = (
     if (enrichmentStatus === "failed") {
       return {
         title: "Medication Review",
-        subtitle: "Validation failed due to network or source issues.",
-        statusLabel: "Failed",
+        subtitle: "Drug verification could not be completed due to a network or source error.",
+        statusLabel: "Verification Failed",
         statusClassName: "border-destructive/30 bg-destructive/10 text-destructive",
       };
     }
@@ -613,6 +613,36 @@ const Index = () => {
     resetScanState();
   };
 
+  const handlePreviewResults = () => {
+    setScanResults({
+      success: true,
+      processing_time: 1.2,
+      patient_name: "Juan dela Cruz",
+      doctor_name: "Dr. Maria Santos",
+      date: "2026-05-20",
+      medications: [
+        { name: "Amoxicillin", dosage: "500mg", quantity: "21 caps", frequency: "TID", signa: "1 cap q8h x 7 days", confidence: 0.97, match_method: "exact" },
+        { name: "Paracetamol", dosage: "500mg", quantity: "10 tabs", frequency: "PRN", signa: "1 tab q4-6h for pain/fever", confidence: 0.95, match_method: "exact" },
+        { name: "Metformin HCl", dosage: "500mg", quantity: "30 tabs", frequency: "BD", signa: "1 tab BID with meals", confidence: 0.91, match_method: "fuzzy" },
+      ],
+      raw_text: "Rx:\nAmoxicillin 500mg caps #21\nSig: 1 cap q8h x 7 days\n\nParacetamol 500mg tabs #10\nSig: 1 tab q4-6h PRN pain/fever\n\nMetformin HCl 500mg tabs #30\nSig: 1 tab BID c meals",
+      enrichment_status: "completed",
+      can_enrich: true,
+      fda_verification: [
+        { query: "amoxicillin", found: true, best_match: { brand_name: "Amoxil", generic_name: "Amoxicillin", registration_number: "FDA-2021-0042" } },
+        { query: "paracetamol", found: true, best_match: { brand_name: "Biogesic", generic_name: "Paracetamol", registration_number: "FDA-2019-0118" } },
+        { query: "metformin hcl", found: false },
+      ],
+      pndf_enriched: [
+        { name: "amoxicillin", found: true, atc_code: "J01CA04" },
+        { name: "paracetamol", found: true, atc_code: "N02BE01" },
+        { name: "metformin hcl", found: true, atc_code: "A10BA02" },
+      ],
+    });
+    setImagePreview("");
+    setAppState("results");
+  };
+
   const rightPanelMeta = getRightPanelMeta(appState, scanResults);
 
   if (appState === "upload") {
@@ -788,10 +818,17 @@ const Index = () => {
                 )}
               </div>
 
-              <div className="pt-6 border-t border-border mt-8">
+              <div className="pt-6 border-t border-border mt-8 space-y-3">
                 <p className="text-sm text-muted-foreground">
                   Supported formats: JPG, PNG, HEIC | Maximum file size: 10MB
                 </p>
+                <button
+                  type="button"
+                  onClick={handlePreviewResults}
+                  className="text-xs text-muted-foreground/50 hover:text-muted-foreground underline underline-offset-2 transition-colors"
+                >
+                  Preview result screen
+                </button>
               </div>
             </div>
           </Card>
@@ -838,12 +875,10 @@ const Index = () => {
               </div>
             </Card>
 
-            <Card className="border-[hsl(var(--panel-border-strong))] bg-[hsl(var(--panel-surface))] p-4 shadow-[var(--panel-shadow)] md:p-5">
-              <div className="flex h-full min-h-0 flex-col gap-4">
+            <div className="flex h-full min-h-0 flex-col gap-4">
                 <div className="rounded-xl border bg-card/80 px-4 py-3">
                   <div className="flex items-start justify-between gap-3">
                     <div className="space-y-1">
-                      <p className="text-[11px] font-semibold uppercase tracking-[0.08em] text-muted-foreground">Analysis Workspace</p>
                       <h2 className="text-base font-semibold leading-tight text-foreground">{rightPanelMeta.title}</h2>
                       <p className="text-xs text-muted-foreground">{rightPanelMeta.subtitle}</p>
                     </div>
@@ -921,8 +956,7 @@ const Index = () => {
                     )}
                   </AnimatePresence>
                 </div>
-              </div>
-            </Card>
+            </div>
           </motion.div>
         </div>
       </div>
