@@ -68,7 +68,7 @@ try {
     await page.getByRole("button", { name: "Demo mode", exact: true }).waitFor();
     assert.equal(await page.getByRole("button", { name: "Demo mode", exact: true }).getAttribute("aria-pressed"), "true");
   };
-  const sample = (name) => page.getByRole("button", { name: `Scan sample ${name}`, exact: true });
+  const sample = (name) => page.getByRole("button", { name: `Scan sample ${name}`, exact: true }).first();
   const result = async (name, medications, detail) => {
     await page.getByRole("heading", { name: "Medication Review", exact: true }).waitFor();
     const text = await page.locator("body").innerText();
@@ -86,7 +86,9 @@ try {
   };
 
   await open();
-  assert.equal(await page.getByRole("button", { name: "Capture with Camera" }).isEnabled(), false);
+  await page.getByRole("heading", { name: "Choose a sample prescription", exact: true }).waitFor();
+  assert.equal(await page.getByRole("button", { name: "Upload Prescription Image" }).count(), 0);
+  assert.equal(await page.getByRole("button", { name: "Capture with Camera" }).count(), 0);
   assert.equal(await page.getByText("Configuration Error", { exact: true }).count(), 0);
   await page.screenshot({ path: fileURLToPath(new URL("gallery.png", output)), fullPage: true });
   for (const [name, medications, detail] of cases) {

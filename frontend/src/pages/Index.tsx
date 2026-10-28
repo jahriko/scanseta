@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { Camera, Upload, Loader2, AlertCircle, Plus, ChevronRight, ImageUp } from "lucide-react";
+import { Camera, Upload, Loader2, AlertCircle, Plus, ChevronRight, ImageUp, Files } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import StatusGlyph, { GlyphState } from "@/components/StatusGlyph";
 import { toast } from "sonner";
@@ -820,12 +820,12 @@ const Index = () => {
               className="flex w-full flex-1 flex-col items-center justify-center px-5 py-12 text-center lg:rounded-xl lg:border lg:border-dashed lg:border-input lg:bg-canvas/50"
             >
               <div className="grid h-11 w-11 place-items-center rounded-lg bg-muted text-muted-foreground">
-                {isCheckingHealth ? <Loader2 className="h-5 w-5 animate-spin" /> : <ImageUp className="h-5 w-5" />}
+                {isCheckingHealth ? <Loader2 className="h-5 w-5 animate-spin" /> : isDemo ? <Files className="h-5 w-5" /> : <ImageUp className="h-5 w-5" />}
               </div>
-              <h2 className="mt-4 text-lg font-semibold tracking-[-0.015em] text-foreground">Scan a prescription</h2>
-              <p className="mt-1.5 max-w-sm text-balance text-sm leading-relaxed text-muted-foreground">
+              <h2 className="mt-4 text-lg font-semibold tracking-[-0.015em] text-foreground">{isDemo ? "Choose a sample prescription" : "Scan a prescription"}</h2>
+              <p className="mt-1.5 max-w-md text-balance text-sm leading-relaxed text-muted-foreground">
                 {isDemo
-                  ? "Pick a sample prescription, or drop one of the sample images here."
+                  ? "Demo mode replays prepared results for these eight real prescriptions. Switch to Live mode to upload or photograph your own."
                   : "Upload or drop a photo of a handwritten prescription, or take one with the camera."}
               </p>
 
@@ -864,8 +864,11 @@ const Index = () => {
                 </div>
               )}
 
+              <input id="file-upload" ref={uploadInputRef} type="file" accept="image/*" onChange={handleFileChange} className="hidden" disabled={!canScan} />
+              {isDemo ? (
+                <div className="mt-7 grid w-full max-w-3xl grid-cols-2 gap-3 text-left sm:grid-cols-4">{sampleButtons("grid")}</div>
+              ) : (
               <div className="mt-7 flex w-full flex-col gap-2.5 sm:flex-row sm:justify-center">
-                <input id="file-upload" ref={uploadInputRef} type="file" accept="image/*" onChange={handleFileChange} className="hidden" disabled={!canScan} />
                 <Button size="lg" disabled={!canScan} onClick={() => uploadInputRef.current?.click()}>
                   <Upload />
                   Upload Prescription Image
@@ -881,11 +884,12 @@ const Index = () => {
                   className="hidden"
                   disabled={!canScan}
                 />
-                <Button variant="outline" size="lg" disabled={isDemo || !canScan || isStartingCamera} onClick={handleOpenCameraCapture}>
+                <Button variant="outline" size="lg" disabled={!canScan || isStartingCamera} onClick={handleOpenCameraCapture}>
                   {isStartingCamera ? <Loader2 className="animate-spin" /> : <Camera />}
                   Capture with Camera
                 </Button>
               </div>
+              )}
 
               {cameraError && <p className="mt-3 text-xs text-review">{cameraError}</p>}
               {isCameraOpen && (
@@ -898,9 +902,7 @@ const Index = () => {
                 </div>
               )}
 
-              <p className="mt-4 text-xs text-muted-foreground">
-                {isDemo ? "Camera capture is available in Live mode." : "JPG, PNG or HEIC, up to 10 MB."}
-              </p>
+              {!isDemo && <p className="mt-4 text-xs text-muted-foreground">JPG, PNG or HEIC, up to 10 MB.</p>}
               {isSelectingDemo && (
                 <p className="mt-3 flex items-center gap-1.5 text-xs text-muted-foreground">
                   <Loader2 className="h-3.5 w-3.5 animate-spin" />
@@ -909,10 +911,12 @@ const Index = () => {
               )}
             </div>
 
-            <section className="border-t border-border px-4 py-6 lg:hidden" aria-label="Sample prescriptions">
-              <h3 className="mb-3 text-[13px] font-medium text-foreground">Sample prescriptions</h3>
-              <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-4">{sampleButtons("grid")}</div>
-            </section>
+            {!isDemo && (
+              <section className="border-t border-border px-4 py-6 lg:hidden" aria-label="Sample prescriptions">
+                <h3 className="mb-3 text-[13px] font-medium text-foreground">Sample prescriptions</h3>
+                <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-4">{sampleButtons("grid")}</div>
+              </section>
+            )}
           </main>
         ) : (
           <main className="grid min-h-0 flex-1 lg:grid-cols-[minmax(0,1fr)_440px]">
