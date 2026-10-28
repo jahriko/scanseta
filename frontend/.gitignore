@@ -29,3 +29,4 @@ pycache
 __pycache__
 *.pyc
 *.pyo
+.vercel
