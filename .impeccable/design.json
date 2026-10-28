@@ -1,0 +1,585 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-10-28T00:00:00Z",
+  "title": "Design System: Scanseta",
+  "extensions": {
+    "colorMeta": {
+      "scanseta-teal": {
+        "role": "primary",
+        "displayName": "Scanseta Teal",
+        "canonical": "hsl(168 80% 29%)",
+        "hex": "#0f856d",
+        "cssVar": "--primary",
+        "tonalRamp": [
+          "hsl(168 40% 15%)",
+          "hsl(168 80% 25%)",
+          "hsl(168 80% 35%)",
+          "hsl(168 80% 45%)",
+          "hsl(168 80% 58%)",
+          "hsl(168 80% 72%)",
+          "hsl(168 40% 85%)",
+          "hsl(168 40% 95%)"
+        ]
+      },
+      "ink-teal": {
+        "role": "primary",
+        "displayName": "Ink Teal",
+        "canonical": "hsl(166 64% 52%)",
+        "hex": "#36d3ae",
+        "cssVar": "--sidebar-primary",
+        "tonalRamp": [
+          "hsl(166 32% 15%)",
+          "hsl(166 64% 25%)",
+          "hsl(166 64% 35%)",
+          "hsl(166 64% 45%)",
+          "hsl(166 64% 58%)",
+          "hsl(166 64% 72%)",
+          "hsl(166 32% 85%)",
+          "hsl(166 32% 95%)"
+        ]
+      },
+      "ink-sidebar": {
+        "role": "neutral",
+        "displayName": "Ink Sidebar",
+        "canonical": "hsl(228 14% 9%)",
+        "hex": "#14151a",
+        "cssVar": "--sidebar-background",
+        "tonalRamp": [
+          "hsl(228 7% 15%)",
+          "hsl(228 14% 25%)",
+          "hsl(228 14% 35%)",
+          "hsl(228 14% 45%)",
+          "hsl(228 14% 58%)",
+          "hsl(228 14% 72%)",
+          "hsl(228 7% 85%)",
+          "hsl(228 7% 95%)"
+        ]
+      },
+      "ink-raised": {
+        "role": "neutral",
+        "displayName": "Ink Raised",
+        "canonical": "hsl(228 12% 15%)",
+        "hex": "#22232b",
+        "cssVar": "--sidebar-accent",
+        "tonalRamp": [
+          "hsl(228 6% 15%)",
+          "hsl(228 12% 25%)",
+          "hsl(228 12% 35%)",
+          "hsl(228 12% 45%)",
+          "hsl(228 12% 58%)",
+          "hsl(228 12% 72%)",
+          "hsl(228 6% 85%)",
+          "hsl(228 6% 95%)"
+        ]
+      },
+      "ink-hairline": {
+        "role": "neutral",
+        "displayName": "Ink Hairline",
+        "canonical": "hsl(228 12% 17%)",
+        "hex": "#262831",
+        "cssVar": "--sidebar-border",
+        "tonalRamp": [
+          "hsl(228 6% 15%)",
+          "hsl(228 12% 25%)",
+          "hsl(228 12% 35%)",
+          "hsl(228 12% 45%)",
+          "hsl(228 12% 58%)",
+          "hsl(228 12% 72%)",
+          "hsl(228 6% 85%)",
+          "hsl(228 6% 95%)"
+        ]
+      },
+      "ink-text": {
+        "role": "neutral",
+        "displayName": "Ink Text",
+        "canonical": "hsl(228 10% 70%)",
+        "hex": "#abaeba",
+        "cssVar": "--sidebar-foreground",
+        "tonalRamp": [
+          "hsl(228 5% 15%)",
+          "hsl(228 10% 25%)",
+          "hsl(228 10% 35%)",
+          "hsl(228 10% 45%)",
+          "hsl(228 10% 58%)",
+          "hsl(228 10% 72%)",
+          "hsl(228 5% 85%)",
+          "hsl(228 5% 95%)"
+        ]
+      },
+      "ink-text-strong": {
+        "role": "neutral",
+        "displayName": "Ink Text Strong",
+        "canonical": "hsl(0 0% 98%)",
+        "hex": "#fafafa",
+        "cssVar": "--sidebar-accent-foreground",
+        "tonalRamp": [
+          "hsl(0 4% 15%)",
+          "hsl(0 0% 25%)",
+          "hsl(0 0% 35%)",
+          "hsl(0 0% 45%)",
+          "hsl(0 0% 58%)",
+          "hsl(0 0% 72%)",
+          "hsl(0 4% 85%)",
+          "hsl(0 4% 95%)"
+        ]
+      },
+      "work-bright": {
+        "role": "neutral",
+        "displayName": "Work Bright",
+        "canonical": "hsl(240 14% 99%)",
+        "hex": "#fcfcfd",
+        "cssVar": "--background",
+        "tonalRamp": [
+          "hsl(240 7% 15%)",
+          "hsl(240 14% 25%)",
+          "hsl(240 14% 35%)",
+          "hsl(240 14% 45%)",
+          "hsl(240 14% 58%)",
+          "hsl(240 14% 72%)",
+          "hsl(240 7% 85%)",
+          "hsl(240 7% 95%)"
+        ]
+      },
+      "surface-white": {
+        "role": "neutral",
+        "displayName": "Surface White",
+        "canonical": "hsl(0 0% 100%)",
+        "hex": "#ffffff",
+        "cssVar": "--card",
+        "tonalRamp": [
+          "hsl(0 4% 15%)",
+          "hsl(0 0% 25%)",
+          "hsl(0 0% 35%)",
+          "hsl(0 0% 45%)",
+          "hsl(0 0% 58%)",
+          "hsl(0 0% 72%)",
+          "hsl(0 4% 85%)",
+          "hsl(0 4% 95%)"
+        ]
+      },
+      "canvas-grey": {
+        "role": "neutral",
+        "displayName": "Canvas Grey",
+        "canonical": "hsl(228 12% 95%)",
+        "hex": "#f1f1f4",
+        "cssVar": "--canvas",
+        "tonalRamp": [
+          "hsl(228 6% 15%)",
+          "hsl(228 12% 25%)",
+          "hsl(228 12% 35%)",
+          "hsl(228 12% 45%)",
+          "hsl(228 12% 58%)",
+          "hsl(228 12% 72%)",
+          "hsl(228 6% 85%)",
+          "hsl(228 6% 95%)"
+        ]
+      },
+      "wash": {
+        "role": "neutral",
+        "displayName": "Wash",
+        "canonical": "hsl(228 12% 96%)",
+        "hex": "#f4f4f6",
+        "cssVar": "--muted",
+        "tonalRamp": [
+          "hsl(228 6% 15%)",
+          "hsl(228 12% 25%)",
+          "hsl(228 12% 35%)",
+          "hsl(228 12% 45%)",
+          "hsl(228 12% 58%)",
+          "hsl(228 12% 72%)",
+          "hsl(228 6% 85%)",
+          "hsl(228 6% 95%)"
+        ]
+      },
+      "hover-wash": {
+        "role": "neutral",
+        "displayName": "Hover Wash",
+        "canonical": "hsl(228 12% 94%)",
+        "hex": "#eeeff2",
+        "cssVar": "--accent",
+        "tonalRamp": [
+          "hsl(228 6% 15%)",
+          "hsl(228 12% 25%)",
+          "hsl(228 12% 35%)",
+          "hsl(228 12% 45%)",
+          "hsl(228 12% 58%)",
+          "hsl(228 12% 72%)",
+          "hsl(228 6% 85%)",
+          "hsl(228 6% 95%)"
+        ]
+      },
+      "hairline": {
+        "role": "neutral",
+        "displayName": "Hairline",
+        "canonical": "hsl(228 10% 90%)",
+        "hex": "#e3e4e8",
+        "cssVar": "--border",
+        "tonalRamp": [
+          "hsl(228 5% 15%)",
+          "hsl(228 10% 25%)",
+          "hsl(228 10% 35%)",
+          "hsl(228 10% 45%)",
+          "hsl(228 10% 58%)",
+          "hsl(228 10% 72%)",
+          "hsl(228 5% 85%)",
+          "hsl(228 5% 95%)"
+        ]
+      },
+      "field-stroke": {
+        "role": "neutral",
+        "displayName": "Field Stroke",
+        "canonical": "hsl(228 10% 86%)",
+        "hex": "#d8d9df",
+        "cssVar": "--input",
+        "tonalRamp": [
+          "hsl(228 5% 15%)",
+          "hsl(228 10% 25%)",
+          "hsl(228 10% 35%)",
+          "hsl(228 10% 45%)",
+          "hsl(228 10% 58%)",
+          "hsl(228 10% 72%)",
+          "hsl(228 5% 85%)",
+          "hsl(228 5% 95%)"
+        ]
+      },
+      "ink-text-body": {
+        "role": "neutral",
+        "displayName": "Ink Text Body",
+        "canonical": "hsl(228 12% 11%)",
+        "hex": "#191a1f",
+        "cssVar": "--foreground",
+        "tonalRamp": [
+          "hsl(228 6% 15%)",
+          "hsl(228 12% 25%)",
+          "hsl(228 12% 35%)",
+          "hsl(228 12% 45%)",
+          "hsl(228 12% 58%)",
+          "hsl(228 12% 72%)",
+          "hsl(228 6% 85%)",
+          "hsl(228 6% 95%)"
+        ]
+      },
+      "slate-muted": {
+        "role": "neutral",
+        "displayName": "Slate Muted",
+        "canonical": "hsl(228 7% 40%)",
+        "hex": "#5f626d",
+        "cssVar": "--muted-foreground",
+        "tonalRamp": [
+          "hsl(228 4% 15%)",
+          "hsl(228 7% 25%)",
+          "hsl(228 7% 35%)",
+          "hsl(228 7% 45%)",
+          "hsl(228 7% 58%)",
+          "hsl(228 7% 72%)",
+          "hsl(228 4% 85%)",
+          "hsl(228 4% 95%)"
+        ]
+      },
+      "review-amber": {
+        "role": "status",
+        "displayName": "Review Amber",
+        "canonical": "hsl(32 92% 33%)",
+        "hex": "#ce7209",
+        "cssVar": "--review",
+        "tonalRamp": [
+          "hsl(32 46% 15%)",
+          "hsl(32 92% 25%)",
+          "hsl(32 92% 35%)",
+          "hsl(32 92% 45%)",
+          "hsl(32 92% 58%)",
+          "hsl(32 92% 72%)",
+          "hsl(32 46% 85%)",
+          "hsl(32 46% 95%)"
+        ]
+      },
+      "review-tint": {
+        "role": "status",
+        "displayName": "Review Tint",
+        "canonical": "hsl(40 100% 96%)",
+        "hex": "#fff8eb",
+        "cssVar": "--review-surface",
+        "tonalRamp": [
+          "hsl(40 50% 15%)",
+          "hsl(40 100% 25%)",
+          "hsl(40 100% 35%)",
+          "hsl(40 100% 45%)",
+          "hsl(40 100% 58%)",
+          "hsl(40 100% 72%)",
+          "hsl(40 50% 85%)",
+          "hsl(40 50% 95%)"
+        ]
+      },
+      "not-found-red": {
+        "role": "status",
+        "displayName": "Not-Found Red",
+        "canonical": "hsl(0 68% 47%)",
+        "hex": "#c92626",
+        "cssVar": "--destructive",
+        "tonalRamp": [
+          "hsl(0 34% 15%)",
+          "hsl(0 68% 25%)",
+          "hsl(0 68% 35%)",
+          "hsl(0 68% 45%)",
+          "hsl(0 68% 58%)",
+          "hsl(0 68% 72%)",
+          "hsl(0 34% 85%)",
+          "hsl(0 34% 95%)"
+        ]
+      },
+      "verified-green": {
+        "role": "status",
+        "displayName": "Verified Green",
+        "canonical": "hsl(152 62% 32%)",
+        "hex": "#1f8455",
+        "cssVar": "--verified",
+        "tonalRamp": [
+          "hsl(152 31% 15%)",
+          "hsl(152 62% 25%)",
+          "hsl(152 62% 35%)",
+          "hsl(152 62% 45%)",
+          "hsl(152 62% 58%)",
+          "hsl(152 62% 72%)",
+          "hsl(152 31% 85%)",
+          "hsl(152 31% 95%)"
+        ]
+      }
+    },
+    "typographyMeta": {
+      "headline": {
+        "displayName": "Headline",
+        "purpose": "Empty-state heading only."
+      },
+      "title": {
+        "displayName": "Title",
+        "purpose": "Pane headings and medicine names."
+      },
+      "body": {
+        "displayName": "Body",
+        "purpose": "Directions under a medicine name; empty-state explanation."
+      },
+      "ui": {
+        "displayName": "UI",
+        "purpose": "The working size: breadcrumb, buttons, count line, step labels, notices."
+      },
+      "label": {
+        "displayName": "Label",
+        "purpose": "Row meta facts, step timings, compact buttons."
+      },
+      "caption": {
+        "displayName": "Caption",
+        "purpose": "Sidebar section header, sample summaries, backend status."
+      },
+      "data": {
+        "displayName": "Data",
+        "purpose": "Medicine strength, right-aligned."
+      },
+      "data-sm": {
+        "displayName": "Data Small",
+        "purpose": "RX ids, raw transcription, inline code."
+      }
+    },
+    "shadows": [
+      {
+        "name": "teal-contact",
+        "value": "0 1px 2px hsl(168 80% 15% / 0.25)",
+        "purpose": "Primary buttons."
+      },
+      {
+        "name": "neutral-contact",
+        "value": "0 1px 2px hsl(228 20% 20% / 0.06)",
+        "purpose": "Outline buttons."
+      },
+      {
+        "name": "ink-segment",
+        "value": "0 1px 2px rgba(0,0,0,0.3)",
+        "purpose": "Selected mode-switch segment on the sidebar."
+      },
+      {
+        "name": "scan-glow",
+        "value": "0 0 0 1px hsl(var(--primary) / 0.15), 0 6px 18px hsl(var(--primary) / 0.35)",
+        "purpose": "The moving scan line only."
+      }
+    ],
+    "motion": [
+      {
+        "name": "ease-out-expo",
+        "value": "cubic-bezier(0.16, 1, 0.3, 1)",
+        "purpose": "Row entrance (180ms, 4px rise, 40ms stagger to 200ms) and pie fill (200ms)."
+      },
+      {
+        "name": "scan-sweep",
+        "value": "1.8s cubic-bezier(0.65, 0, 0.35, 1) infinite alternate",
+        "purpose": "Scan line travelling 4% to 96% over the photo while reading."
+      },
+      {
+        "name": "spin-slow",
+        "value": "2.4s linear infinite",
+        "purpose": "Pending StatusGlyph rotation."
+      },
+      {
+        "name": "state-change",
+        "value": "150ms",
+        "purpose": "Color, background and shadow transitions on controls; pane cross-fade."
+      },
+      {
+        "name": "reduced-motion",
+        "value": "prefers-reduced-motion: reduce",
+        "purpose": "Scan line and pending spin stop."
+      }
+    ],
+    "breakpoints": [
+      {
+        "name": "sm",
+        "value": "640px",
+        "note": "Sample grid goes to 4 columns; top-bar status shows."
+      },
+      {
+        "name": "md",
+        "value": "768px",
+        "note": "Wider gutters."
+      },
+      {
+        "name": "lg",
+        "value": "1024px",
+        "note": "App shell: ink sidebar appears, canvas and 440px review pane sit side by side."
+      }
+    ]
+  },
+  "components": [
+    {
+      "name": "Primary Button",
+      "kind": "button",
+      "refersTo": "button-primary-lg",
+      "description": "The one teal action per view, e.g. Upload in the empty state.",
+      "html": "<button class=\"ds-btn-primary\"><svg width=\"16\" height=\"16\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><path d=\"M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4\"/><polyline points=\"17 8 12 3 7 8\"/><line x1=\"12\" x2=\"12\" y1=\"3\" y2=\"15\"/></svg>Upload Prescription Image</button>",
+      "css": ".ds-btn-primary { display:inline-flex; align-items:center; justify-content:center; gap:8px; white-space:nowrap; border-radius:6px; font-size:13px; font-weight:500; font-family: Inter, system-ui, sans-serif; font-feature-settings: 'cv11','ss01','ss03'; transition: background-color 150ms, border-color 150ms, color 150ms, box-shadow 150ms; cursor:pointer; height:40px; padding:0 20px; font-size:14px; border:none; background:hsl(var(--primary, 168 80% 29%)); color:#fff; box-shadow:0 1px 2px hsl(168 80% 15% / 0.25); } .ds-btn-primary:hover { background:hsl(var(--primary, 168 80% 29%) / 0.9); } .ds-btn-primary:focus-visible { outline:none; box-shadow: 0 0 0 2px #fff, 0 0 0 4px hsl(var(--ring, 168 80% 29%)); } .ds-btn-primary:disabled { opacity:.5; pointer-events:none; }"
+    },
+    {
+      "name": "Outline Button",
+      "kind": "button",
+      "refersTo": "button-outline",
+      "description": "Secondary actions: camera, scan another.",
+      "html": "<button class=\"ds-btn-outline\">Capture with Camera</button>",
+      "css": ".ds-btn-outline { display:inline-flex; align-items:center; justify-content:center; gap:8px; white-space:nowrap; border-radius:6px; font-size:13px; font-weight:500; font-family: Inter, system-ui, sans-serif; font-feature-settings: 'cv11','ss01','ss03'; transition: background-color 150ms, border-color 150ms, color 150ms, box-shadow 150ms; cursor:pointer; height:36px; padding:0 14px; border:1px solid hsl(var(--input, 228 10% 86%)); background:hsl(var(--card, 0 0% 100%)); color:hsl(var(--foreground, 228 12% 11%)); box-shadow:0 1px 2px hsl(228 20% 20% / 0.06); } .ds-btn-outline:hover { background:hsl(var(--muted, 228 12% 96%)); } .ds-btn-outline:focus-visible { outline:none; box-shadow: 0 0 0 2px #fff, 0 0 0 4px hsl(var(--ring, 168 80% 29%)); }"
+    },
+    {
+      "name": "Compact Button",
+      "kind": "button",
+      "refersTo": "button-compact",
+      "description": "28px outline action in the top bar and count line.",
+      "html": "<button class=\"ds-btn-compact\"><svg width=\"14\" height=\"14\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\" stroke-linejoin=\"round\"><rect width=\"14\" height=\"14\" x=\"8\" y=\"8\" rx=\"2\"/><path d=\"M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2\"/></svg>Copy list</button>",
+      "css": ".ds-btn-compact { display:inline-flex; align-items:center; justify-content:center; gap:8px; white-space:nowrap; border-radius:6px; font-size:13px; font-weight:500; font-family: Inter, system-ui, sans-serif; font-feature-settings: 'cv11','ss01','ss03'; transition: background-color 150ms, border-color 150ms, color 150ms, box-shadow 150ms; cursor:pointer; gap:6px; height:28px; padding:0 10px; font-size:12px; border:1px solid hsl(var(--input, 228 10% 86%)); background:hsl(var(--card, 0 0% 100%)); color:hsl(var(--foreground, 228 12% 11%)); box-shadow:0 1px 2px hsl(228 20% 20% / 0.06); } .ds-btn-compact:hover { background:hsl(var(--muted, 228 12% 96%)); } .ds-btn-compact:focus-visible { outline:none; box-shadow: 0 0 0 2px #fff, 0 0 0 4px hsl(var(--ring, 168 80% 29%)); }"
+    },
+    {
+      "name": "Sidebar Navigation",
+      "kind": "nav",
+      "refersTo": "sidebar-item",
+      "description": "Ink sidebar with New scan and sample rows; active row raised.",
+      "html": "<nav class=\"ds-side\"><div class=\"ds-side-brand\"><svg width=\"22\" height=\"22\" viewBox=\"0 0 22 22\"><rect width=\"22\" height=\"22\" rx=\"6\" fill=\"hsl(166 64% 52%)\"/><path d=\"M6 7.5h6.5M6 11h10M6 14.5h7.5\" stroke=\"hsl(228 14% 9%)\" stroke-width=\"1.8\" stroke-linecap=\"round\"/></svg>Scanseta</div><button class=\"ds-side-new\"><svg width=\"16\" height=\"16\" viewBox=\"0 0 24 24\" fill=\"none\" stroke=\"currentColor\" stroke-width=\"2\" stroke-linecap=\"round\"><path d=\"M5 12h14\"/><path d=\"M12 5v14\"/></svg>New scan</button><p class=\"ds-side-head\">Sample prescriptions</p><button class=\"ds-side-item\"><span class=\"ds-side-thumb\"></span><span><span class=\"ds-side-id\">RX000085</span><span class=\"ds-side-sum\">Amlodipine</span></span></button><button class=\"ds-side-item\" aria-current=\"true\"><span class=\"ds-side-thumb\"></span><span><span class=\"ds-side-id\">RX002335</span><span class=\"ds-side-sum\">Metronidazole, Ciprofloxacin</span></span></button><div class=\"ds-side-foot\"><div class=\"ds-mode\"><button aria-pressed=\"true\">Demo mode</button><button>Live mode</button></div></div></nav>",
+      "css": ".ds-side { font-family: Inter, system-ui, sans-serif; font-feature-settings: 'cv11','ss01','ss03'; width:248px; background:hsl(228 14% 9%); color:hsl(228 10% 70%); padding:0 8px 12px; display:flex; flex-direction:column; } .ds-side-brand { display:flex; align-items:center; gap:10px; height:48px; padding:0 8px; font-size:14px; font-weight:600; letter-spacing:-0.01em; color:hsl(0 0% 98%); } .ds-side-new { display:flex; align-items:center; gap:8px; height:32px; padding:0 8px; border:none; border-radius:6px; background:none; color:hsl(0 0% 98%); font:inherit; font-size:13px; cursor:pointer; } .ds-side-new:hover { background:hsl(228 12% 15%); } .ds-side-head { margin:20px 8px 6px; font-size:11px; font-weight:500; color:hsl(228 10% 70% / .8); } .ds-side-item { display:flex; width:100%; align-items:center; gap:10px; padding:6px 8px; border:none; border-radius:6px; background:none; color:inherit; font:inherit; text-align:left; cursor:pointer; transition:background-color 150ms, color 150ms; } .ds-side-item:hover { background:hsl(228 12% 15% / .6); color:hsl(0 0% 98%); } .ds-side-item[aria-current] { background:hsl(228 12% 15%); color:hsl(0 0% 98%); } .ds-side-item:focus-visible, .ds-side-new:focus-visible { outline:2px solid hsl(166 64% 52%); outline-offset:2px; } .ds-side-thumb { width:28px; height:32px; border-radius:3px; background:hsl(228 12% 15%); flex-shrink:0; } .ds-side-id { display:block; font-family: 'JetBrains Mono', ui-monospace, monospace; font-variant-numeric: tabular-nums; font-size:12px; } .ds-side-sum { display:block; font-size:11px; color:hsl(228 10% 70% / .8); } .ds-side-foot { margin-top:16px; border-top:1px solid hsl(228 12% 17%); padding-top:12px; } .ds-mode { display:grid; grid-template-columns:1fr 1fr; padding:2px; border-radius:6px; background:hsl(228 12% 15%); } .ds-mode button { height:28px; border:none; border-radius:5px; background:none; color:hsl(228 10% 70%); font:inherit; font-size:12px; font-weight:500; cursor:pointer; } .ds-mode button[aria-pressed=true] { background:hsl(228 10% 70% / .15); color:hsl(0 0% 98%); box-shadow:0 1px 2px rgba(0,0,0,.3); }"
+    },
+    {
+      "name": "StatusGlyph",
+      "kind": "custom",
+      "refersTo": "status-glyph",
+      "description": "Signature: one 16px glyph family for every state; shape and hue both change.",
+      "html": "<div class=\"ds-glyphs\"><svg class=\"ds-glyph\" width=\"16\" height=\"16\" viewBox=\"0 0 16 16\" fill=\"none\" style=\"color:hsl(228 7% 40% / 0.6)\"><circle cx=\"8\" cy=\"8\" r=\"6.25\" stroke=\"currentColor\" stroke-width=\"1.5\" stroke-dasharray=\"2.4 2.2\"/></svg><span>Todo</span><svg class=\"ds-glyph\" width=\"16\" height=\"16\" viewBox=\"0 0 16 16\" fill=\"none\" style=\"color:hsl(var(--primary, 168 80% 29%))\"><circle cx=\"8\" cy=\"8\" r=\"6.25\" stroke=\"currentColor\" stroke-width=\"1.5\"/><circle class=\"ds-pie\" cx=\"8\" cy=\"8\" r=\"3.1\" stroke=\"currentColor\" stroke-width=\"6.2\" stroke-dasharray=\"11.7 19.48\" transform=\"rotate(-90 8 8)\"/></svg><span>Progress</span><svg class=\"ds-glyph\" width=\"16\" height=\"16\" viewBox=\"0 0 16 16\" fill=\"none\" style=\"color:hsl(var(--verified, 152 62% 32%))\"><circle cx=\"8\" cy=\"8\" r=\"7\" fill=\"currentColor\"/><path d=\"M5 8.2 7.1 10.2 11 6\" stroke=\"white\" stroke-width=\"1.6\" stroke-linecap=\"round\" stroke-linejoin=\"round\"/></svg><span>Done</span><svg class=\"ds-glyph\" width=\"16\" height=\"16\" viewBox=\"0 0 16 16\" fill=\"none\" style=\"color:hsl(var(--review, 32 92% 42%))\"><circle cx=\"8\" cy=\"8\" r=\"7\" fill=\"currentColor\"/><path d=\"M8 4.6v4.2\" stroke=\"white\" stroke-width=\"1.7\" stroke-linecap=\"round\"/><circle cx=\"8\" cy=\"11.1\" r=\"1\" fill=\"white\"/></svg><span>Review</span><svg class=\"ds-glyph\" width=\"16\" height=\"16\" viewBox=\"0 0 16 16\" fill=\"none\" style=\"color:hsl(var(--destructive, 0 68% 47%))\"><circle cx=\"8\" cy=\"8\" r=\"7\" fill=\"currentColor\"/><path d=\"m5.6 5.6 4.8 4.8m0-4.8-4.8 4.8\" stroke=\"white\" stroke-width=\"1.6\" stroke-linecap=\"round\"/></svg><span>Missing</span></div>",
+      "css": ".ds-glyphs { font-family: Inter, system-ui, sans-serif; font-feature-settings: 'cv11','ss01','ss03'; display:grid; grid-template-columns:16px auto 16px auto 16px auto 16px auto 16px auto; align-items:center; gap:6px 6px; font-size:12px; color:hsl(228 7% 40%); } .ds-glyph { flex-shrink:0; } .ds-pie { transition: stroke-dasharray 200ms cubic-bezier(0.16,1,0.3,1); }"
+    },
+    {
+      "name": "Medicine Row",
+      "kind": "custom",
+      "refersTo": "medicine-row",
+      "description": "Hairline-divided list row: glyph, name and directions, mono strength; review rows tinted full width.",
+      "html": "<ul class=\"ds-meds\"><li class=\"ds-med\"><svg class=\"ds-glyph\" width=\"16\" height=\"16\" viewBox=\"0 0 16 16\" fill=\"none\" style=\"color:hsl(var(--verified, 152 62% 32%))\"><circle cx=\"8\" cy=\"8\" r=\"7\" fill=\"currentColor\"/><path d=\"M5 8.2 7.1 10.2 11 6\" stroke=\"white\" stroke-width=\"1.6\" stroke-linecap=\"round\" stroke-linejoin=\"round\"/></svg><div><h4>Metronidazole</h4><p>1 tablet, 3x a day for 5 days</p><div class=\"ds-med-meta\"><span>15 tablets</span><span>3x a day</span></div></div><span class=\"ds-med-dose\">500 mg/tablet</span></li><li class=\"ds-med ds-med-review\"><svg class=\"ds-glyph\" width=\"16\" height=\"16\" viewBox=\"0 0 16 16\" fill=\"none\" style=\"color:hsl(var(--review, 32 92% 42%))\"><circle cx=\"8\" cy=\"8\" r=\"7\" fill=\"currentColor\"/><path d=\"M8 4.6v4.2\" stroke=\"white\" stroke-width=\"1.7\" stroke-linecap=\"round\"/><circle cx=\"8\" cy=\"11.1\" r=\"1\" fill=\"white\"/></svg><div><h4>Unclear Medication</h4><p>1 tablet, 3x a day for 3 days</p><div class=\"ds-med-meta\"><span class=\"ds-med-flag\">Needs review</span><span>9 tablets</span></div></div><span class=\"ds-med-miss\">Strength not written</span></li></ul>",
+      "css": ".ds-meds { font-family: Inter, system-ui, sans-serif; font-feature-settings: 'cv11','ss01','ss03'; list-style:none; margin:0; padding:0; border-top:1px solid hsl(228 10% 90%); border-bottom:1px solid hsl(228 10% 90%); background:hsl(240 14% 99%); } .ds-med { display:grid; grid-template-columns:16px minmax(0,1fr) auto; column-gap:12px; padding:14px 20px; } .ds-med + .ds-med { border-top:1px solid hsl(228 10% 90%); } .ds-med > svg { margin-top:2px; } .ds-med h4 { margin:0; font-size:15px; font-weight:600; line-height:1.375; letter-spacing:-0.01em; color:hsl(228 12% 11%); } .ds-med p { margin:4px 0 0; font-size:14px; line-height:1.375; color:hsl(228 12% 11% / .85); } .ds-med-meta { margin-top:6px; display:flex; flex-wrap:wrap; gap:4px 12px; font-size:12px; color:hsl(228 7% 40%); font-variant-numeric:tabular-nums; } .ds-med-flag { font-weight:500; color:hsl(228 12% 11%); } .ds-med-dose { font-family: 'JetBrains Mono', ui-monospace, monospace; font-variant-numeric: tabular-nums; font-size:13px; font-weight:500; color:hsl(228 12% 11%); text-align:right; } .ds-med-miss { font-size:12px; color:hsl(228 7% 40%); text-align:right; } .ds-med-review { background:hsl(40 100% 96%); }"
+    },
+    {
+      "name": "Processing Steps",
+      "kind": "custom",
+      "refersTo": "status-glyph",
+      "description": "Progress track plus hairline step list with filling pies.",
+      "html": "<div class=\"ds-proc\"><div class=\"ds-proc-top\"><span>Progress</span><b>42%</b></div><div class=\"ds-proc-track\"><div style=\"width:42%\"></div></div><ol><li><svg class=\"ds-glyph\" width=\"16\" height=\"16\" viewBox=\"0 0 16 16\" fill=\"none\" style=\"color:hsl(var(--verified, 152 62% 32%))\"><circle cx=\"8\" cy=\"8\" r=\"7\" fill=\"currentColor\"/><path d=\"M5 8.2 7.1 10.2 11 6\" stroke=\"white\" stroke-width=\"1.6\" stroke-linecap=\"round\" stroke-linejoin=\"round\"/></svg><span>Reading handwriting</span><small>Done</small></li><li class=\"on\"><svg class=\"ds-glyph\" width=\"16\" height=\"16\" viewBox=\"0 0 16 16\" fill=\"none\" style=\"color:hsl(var(--primary, 168 80% 29%))\"><circle cx=\"8\" cy=\"8\" r=\"6.25\" stroke=\"currentColor\" stroke-width=\"1.5\"/><circle class=\"ds-pie\" cx=\"8\" cy=\"8\" r=\"3.1\" stroke=\"currentColor\" stroke-width=\"6.2\" stroke-dasharray=\"11.7 19.48\" transform=\"rotate(-90 8 8)\"/></svg><span>Extracting medications</span><small>~3s</small></li><li><svg class=\"ds-glyph\" width=\"16\" height=\"16\" viewBox=\"0 0 16 16\" fill=\"none\" style=\"color:hsl(228 7% 40% / 0.6)\"><circle cx=\"8\" cy=\"8\" r=\"6.25\" stroke=\"currentColor\" stroke-width=\"1.5\" stroke-dasharray=\"2.4 2.2\"/></svg><span>Checking FDA and PNDF</span><small>~2s</small></li></ol></div>",
+      "css": ".ds-proc { font-family: Inter, system-ui, sans-serif; font-feature-settings: 'cv11','ss01','ss03'; font-size:13px; color:hsl(228 12% 11%); } .ds-proc-top { display:flex; justify-content:space-between; color:hsl(228 7% 40%); } .ds-proc-top b { font-weight:500; color:hsl(228 12% 11%); font-variant-numeric:tabular-nums; } .ds-proc-track { margin-top:8px; height:4px; border-radius:9999px; background:hsl(228 12% 96%); overflow:hidden; } .ds-proc-track div { height:100%; border-radius:9999px; background:hsl(var(--primary, 168 80% 29%)); transition:width 200ms ease-out; } .ds-proc ol { list-style:none; margin:24px 0 0; padding:0; border-top:1px solid hsl(228 10% 90%); border-bottom:1px solid hsl(228 10% 90%); } .ds-proc li { display:flex; align-items:center; gap:12px; padding:10px 0; color:hsl(228 7% 40%); } .ds-proc li + li { border-top:1px solid hsl(228 10% 90%); } .ds-proc li:first-child, .ds-proc li.on { color:hsl(228 12% 11%); } .ds-proc li.on span { font-weight:500; } .ds-proc small { margin-left:auto; font-size:12px; color:hsl(228 7% 40%); font-variant-numeric:tabular-nums; }"
+    },
+    {
+      "name": "Transcription Block",
+      "kind": "custom",
+      "refersTo": "transcription-block",
+      "description": "Raw text in mono on a Wash block, capped and scrollable.",
+      "html": "<pre class=\"ds-pre\">Metronidazole (Tricmex forte) 500mg/tablet #15\nSig: 1 tab TID x 5 days</pre>",
+      "css": ".ds-pre { font-family: 'JetBrains Mono', ui-monospace, monospace; font-variant-numeric: tabular-nums; margin:0; max-height:192px; overflow:auto; border-radius:6px; background:hsl(228 12% 96%); padding:12px 14px; font-size:12px; line-height:1.625; white-space:pre-wrap; color:hsl(228 12% 11% / .8); }"
+    }
+  ],
+  "narrative": {
+    "northStar": "The Second Reader",
+    "overview": "Scanseta is a work tool that sits beside the prescription and reads it a second time. The photo is the authority; the interface is the quiet colleague next to it, laying out what it read as a dense, ordered list and pointing plainly at what it could not read. The world is a Linear-style product shell, pinned by the user: an ink sidebar that holds navigation and samples, a bright work area for counter lighting, and content divided by 1px hairlines instead of boxed in cards.\n\nDensity is high and calm. Text runs 11 to 15px with one 18px headline for the empty state; weight and tracking carry hierarchy, not size jumps. Color is almost absent from the work area so that the few signals that appear (teal for action and progress, amber for \"look again\", red for \"not found\", green for \"verified\") read at a glance. Every status is drawn by a single glyph family, the pie StatusGlyph, which differs in shape as well as color.\n\nMotion is short and functional: a teal scan line sweeps the photo while it is read, pies fill as steps complete, rows settle in with a 4px rise. All looping motion stops under reduced-motion.",
+    "keyCharacteristics": [
+      "Ink sidebar (248px) beside a bright work area; 48px top bar with breadcrumb.",
+      "Photo canvas left, 440px review pane right on desktop; stacked on mobile.",
+      "Hairline-divided list rows, no cards, no drop-shadowed panels.",
+      "Inter for interface, JetBrains Mono for data (RX ids, strengths, transcription).",
+      "One teal accent; amber, red and green reserved for status.",
+      "The pie StatusGlyph is the signature: one glyph family for every state."
+    ],
+    "rules": [
+      {
+        "name": "The One Voice Rule",
+        "body": "Teal is the only non-status color, and it means \"act here\" or \"working\". It never decorates, fills a heading, or tints a section.",
+        "section": "colors"
+      },
+      {
+        "name": "The Status Tints Rows Rule",
+        "body": "A row that needs review is tinted edge to edge with Review Tint; it is not boxed, badged, or bordered.",
+        "section": "colors"
+      },
+      {
+        "name": "The Amber Is a Signal Rule",
+        "body": "Review Amber (3.3:1 on Review Tint) is for glyphs, borders and tints. Words that carry the review state at text sizes must meet 4.5:1, so they need a darker amber or Ink Text Body beside the amber glyph.",
+        "section": "colors"
+      },
+      {
+        "name": "The Mono Means Data Rule",
+        "body": "JetBrains Mono is used only for values a pharmacist checks against the paper or a system: strengths, RX ids, transcription, config values. Labels and prose stay in Inter.",
+        "section": "typography"
+      },
+      {
+        "name": "The Tabular Figures Rule",
+        "body": "Every number that can change or be compared (progress %, quantities, step timings, strengths) uses tabular figures.",
+        "section": "typography"
+      },
+      {
+        "name": "The Small And Tight Rule",
+        "body": "Hierarchy comes from weight (400/500/600) and tracking, inside an 11 to 18px range. No size above 18px in the product shell.",
+        "section": "typography"
+      },
+      {
+        "name": "The Image Beside The List Rule",
+        "body": "On desktop the photo and the extracted list are always visible side by side; the list never replaces or covers the image.",
+        "section": "layout"
+      },
+      {
+        "name": "The Hairline Not Card Rule",
+        "body": "Group with 1px Hairline dividers (`divide-y` plus top and bottom rule) and full-bleed rows. Panels do not float on shadows.",
+        "section": "elevation"
+      }
+    ],
+    "dos": [
+      "**Do** keep the ink sidebar and bright work area split; new screens live inside this shell.",
+      "**Do** separate list content with 1px Hairline dividers and full-bleed rows.",
+      "**Do** use the StatusGlyph for every status, in place of new badges, chips or icons.",
+      "**Do** put strengths, RX ids and raw text in JetBrains Mono with tabular figures.",
+      "**Do** reserve Scanseta Teal for actions, focus and progress; use Ink Teal on the sidebar.",
+      "**Do** pair every status color with a shape or a word.",
+      "**Do** stop looping motion (scan line, pending spin) under `prefers-reduced-motion`."
+    ],
+    "donts": [
+      "**Don't** wrap content in soft white cards with shadows, or float panels on elevation.",
+      "**Don't** add a second accent hue or use Verified Green for actions.",
+      "**Don't** set small text in Review Amber; it is 3.3:1 against Review Tint.",
+      "**Don't** go above 18px type inside the product shell.",
+      "**Don't** cover or replace the prescription photo with the extracted list."
+    ]
+  }
+}

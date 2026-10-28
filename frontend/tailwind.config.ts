@@ -43,6 +43,12 @@ export default {
           DEFAULT: "hsl(var(--popover))",
           foreground: "hsl(var(--popover-foreground))",
         },
+        review: {
+          DEFAULT: "hsl(var(--review))",
+          surface: "hsl(var(--review-surface))",
+        },
+        verified: "hsl(var(--verified))",
+        canvas: "hsl(var(--canvas))",
         card: {
           DEFAULT: "hsl(var(--card))",
           foreground: "hsl(var(--card-foreground))",
@@ -59,8 +65,8 @@ export default {
         },
       },
       fontFamily: {
-        sans: ["Geist", "system-ui", "sans-serif"],
-        mono: ["Geist Mono", "ui-monospace", "monospace"],
+        sans: ["Inter", "system-ui", "sans-serif"],
+        mono: ["JetBrains Mono", "ui-monospace", "monospace"],
       },
       borderRadius: {
         lg: "var(--radius)",

@@ -1,109 +1,54 @@
-@import url('https://fonts.googleapis.com/css2?family=Geist:wght@300;400;500;600;700&family=Geist+Mono:wght@400;500&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Inter:opsz,wght@14..32,400..700&family=JetBrains+Mono:wght@400;500&display=swap');
 
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
-/* Definition of the design system. All colors, gradients, fonts, etc should be defined here. 
-All colors MUST be HSL.
-*/
+/* Scanseta tokens. Colors are HSL triples consumed by tailwind.config.ts. */
 
 @layer base {
   :root {
-    --background: 210 40% 98%;
-    --foreground: 210 20% 15%;
-
+    /* Work area: bright, for counter lighting */
+    --background: 240 14% 99%;
+    --foreground: 228 12% 11%;
     --card: 0 0% 100%;
-    --card-foreground: 210 20% 15%;
-
+    --card-foreground: 228 12% 11%;
     --popover: 0 0% 100%;
-    --popover-foreground: 210 20% 15%;
+    --popover-foreground: 228 12% 11%;
 
-    --primary: 195 85% 45%;
+    /* Scanseta teal: primary actions, focus, progress */
+    --primary: 168 80% 29%;
     --primary-foreground: 0 0% 100%;
 
-    --secondary: 195 25% 92%;
-    --secondary-foreground: 195 85% 35%;
+    --secondary: 228 10% 95%;
+    --secondary-foreground: 228 12% 15%;
+    --muted: 228 12% 96%;
+    --muted-foreground: 228 7% 40%;
+    --accent: 228 12% 94%;
+    --accent-foreground: 228 12% 11%;
 
-    --muted: 210 30% 95%;
-    --muted-foreground: 210 15% 50%;
+    --destructive: 0 68% 47%;
+    --destructive-foreground: 0 0% 100%;
+    --review: 32 92% 33%;
+    --review-surface: 40 100% 96%;
+    --verified: 152 62% 32%;
 
-    --accent: 160 75% 45%;
-    --accent-foreground: 0 0% 100%;
+    --border: 228 10% 90%;
+    --input: 228 10% 86%;
+    --ring: 168 80% 29%;
+    --canvas: 228 12% 95%;
 
-    --destructive: 0 84.2% 60.2%;
-    --destructive-foreground: 210 40% 98%;
+    --radius: 0.5rem;
 
-    --border: 210 25% 88%;
-    --input: 210 25% 88%;
-    --ring: 195 85% 45%;
-
-    --radius: 0.75rem;
-    
-    --medical-gradient: linear-gradient(135deg, hsl(195 85% 45%), hsl(195 75% 55%));
-    --success-gradient: linear-gradient(135deg, hsl(160 75% 45%), hsl(160 65% 55%));
-    --card-shadow: 0 4px 20px -2px hsl(195 85% 45% / 0.08);
-    --panel-surface: 210 42% 98.8%;
-    --panel-border-strong: 210 26% 83%;
-    --panel-shadow: 0 18px 45px -30px hsl(212 42% 28% / 0.45);
-    --transition-smooth: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-
-    --sidebar-background: 0 0% 98%;
-
-    --sidebar-foreground: 240 5.3% 26.1%;
-
-    --sidebar-primary: 240 5.9% 10%;
-
-    --sidebar-primary-foreground: 0 0% 98%;
-
-    --sidebar-accent: 240 4.8% 95.9%;
-
-    --sidebar-accent-foreground: 240 5.9% 10%;
-
-    --sidebar-border: 220 13% 91%;
-
-    --sidebar-ring: 217.2 91.2% 59.8%;
-  }
-
-  .dark {
-    --background: 210 25% 12%;
-    --foreground: 210 30% 95%;
-
-    --card: 210 20% 15%;
-    --card-foreground: 210 30% 95%;
-
-    --popover: 210 20% 15%;
-    --popover-foreground: 210 30% 95%;
-
-    --primary: 195 85% 50%;
-    --primary-foreground: 0 0% 100%;
-
-    --secondary: 195 25% 22%;
-    --secondary-foreground: 195 75% 65%;
-
-    --muted: 210 20% 20%;
-    --muted-foreground: 210 20% 65%;
-
-    --accent: 160 75% 50%;
-    --accent-foreground: 0 0% 100%;
-
-    --destructive: 0 62.8% 30.6%;
-    --destructive-foreground: 210 40% 98%;
-
-    --border: 210 20% 25%;
-    --input: 210 20% 25%;
-    --ring: 195 85% 50%;
-    --panel-surface: 210 23% 15%;
-    --panel-border-strong: 210 18% 30%;
-    --panel-shadow: 0 18px 45px -30px hsl(210 80% 4% / 0.8);
-    --sidebar-background: 240 5.9% 10%;
-    --sidebar-foreground: 240 4.8% 95.9%;
-    --sidebar-primary: 224.3 76.3% 48%;
-    --sidebar-primary-foreground: 0 0% 100%;
-    --sidebar-accent: 240 3.7% 15.9%;
-    --sidebar-accent-foreground: 240 4.8% 95.9%;
-    --sidebar-border: 240 3.7% 15.9%;
-    --sidebar-ring: 217.2 91.2% 59.8%;
+    /* Ink sidebar */
+    --sidebar-background: 228 14% 9%;
+    --sidebar-foreground: 228 10% 70%;
+    --sidebar-primary: 166 64% 52%;
+    --sidebar-primary-foreground: 228 14% 9%;
+    --sidebar-accent: 228 12% 15%;
+    --sidebar-accent-foreground: 0 0% 98%;
+    --sidebar-border: 228 12% 17%;
+    --sidebar-ring: 166 64% 52%;
   }
 }
 
@@ -112,8 +57,52 @@ All colors MUST be HSL.
     @apply border-border;
   }
 
+  html {
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+
   body {
     @apply bg-background text-foreground;
-    font-family: 'Geist', system-ui, sans-serif;
+    font-family: 'Inter', system-ui, sans-serif;
+    font-feature-settings: "cv11", "ss01", "ss03";
+  }
+
+  ::selection {
+    background: hsl(var(--primary) / 0.18);
+    color: hsl(var(--foreground));
+  }
+
+  :focus-visible {
+    outline: 2px solid hsl(var(--ring));
+    outline-offset: 2px;
+  }
+
+  * {
+    scrollbar-width: thin;
+    scrollbar-color: hsl(var(--input)) transparent;
+  }
+}
+
+@layer utilities {
+  .tnum {
+    font-variant-numeric: tabular-nums;
+  }
+
+  .scan-line {
+    animation: scan-sweep 1.8s cubic-bezier(0.65, 0, 0.35, 1) infinite alternate;
+  }
+
+  @keyframes scan-sweep {
+    from { top: 4%; }
+    to { top: 96%; }
+  }
+
+  .spin-slow {
+    animation: spin 2.4s linear infinite;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .scan-line, .spin-slow { animation: none; }
   }
 }

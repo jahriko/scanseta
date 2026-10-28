@@ -1,8 +1,8 @@
 import { useState, useEffect, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { Camera, Upload, Scan, Loader2, AlertCircle, Image as ImageIcon } from "lucide-react";
+import { Camera, Upload, Loader2, AlertCircle, Plus, ChevronRight, ImageUp } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Card } from "@/components/ui/card";
+import StatusGlyph, { GlyphState } from "@/components/StatusGlyph";
 import { toast } from "sonner";
 import ProcessingScreen from "@/components/ProcessingScreen";
 import ResultsScreen from "@/components/ResultsScreen";
@@ -134,19 +134,50 @@ const getRightPanelMeta = (
   };
 };
 
-const StickyHeader = ({ mode, onModeChange }: { mode: ScanMode; onModeChange: (mode: ScanMode) => void }) => (
-  <header className="sticky top-0 z-50 border-b border-border bg-background/95 backdrop-blur">
-    <div className="mx-auto flex w-full max-w-7xl flex-wrap items-center justify-between gap-3 px-4 py-3 md:px-6">
-      <div>
-        <h1 className="text-3xl font-semibold tracking-tight text-foreground">Scanseta</h1>
-        <p className="text-muted-foreground text-sm">{mode === "demo" ? "Demo mode" : "AI Prescription Scanner"}</p>
-      </div>
-      <div role="group" aria-label="Scan mode" className="flex gap-2">
-        <Button type="button" variant={mode === "demo" ? "default" : "outline"} aria-pressed={mode === "demo"} onClick={() => onModeChange("demo")}>Demo mode</Button>
-        <Button type="button" variant={mode === "live" ? "default" : "outline"} aria-pressed={mode === "live"} onClick={() => onModeChange("live")}>Live mode</Button>
-      </div>
-    </div>
-  </header>
+const statusGlyph = (statusLabel: string): GlyphState => {
+  switch (statusLabel) {
+    case "Processing":
+      return "progress";
+    case "Complete":
+      return "done";
+    case "Validation Running":
+      return "pending";
+    case "Partially Complete":
+    case "Timed Out":
+      return "review";
+    case "Error":
+    case "Verification Failed":
+      return "missing";
+    default:
+      return "todo";
+  }
+};
+
+const BrandMark = () => (
+  <svg width="22" height="22" viewBox="0 0 22 22" aria-hidden="true" className="shrink-0">
+    <rect width="22" height="22" rx="6" fill="hsl(var(--sidebar-primary))" />
+    <path d="M6 7.5h6.5M6 11h10M6 14.5h7.5" stroke="hsl(var(--sidebar-primary-foreground))" strokeWidth="1.8" strokeLinecap="round" />
+  </svg>
+);
+
+const ModeSwitch = ({ mode, onModeChange }: { mode: ScanMode; onModeChange: (mode: ScanMode) => void }) => (
+  <div role="group" aria-label="Scan mode" className="grid grid-cols-2 rounded-md bg-sidebar-accent p-0.5">
+    {(["demo", "live"] as const).map((value) => (
+      <button
+        key={value}
+        type="button"
+        aria-pressed={mode === value}
+        onClick={() => onModeChange(value)}
+        className={`h-7 rounded-[5px] px-3 text-xs font-medium transition-colors duration-150 focus-visible:outline-sidebar-ring ${
+          mode === value
+            ? "bg-sidebar-foreground/15 text-sidebar-accent-foreground shadow-[0_1px_2px_rgba(0,0,0,0.3)]"
+            : "text-sidebar-foreground hover:text-sidebar-accent-foreground"
+        }`}
+      >
+        {value === "demo" ? "Demo mode" : "Live mode"}
+      </button>
+    ))}
+  </div>
 );
 
 const Index = () => {
@@ -170,6 +201,8 @@ const Index = () => {
   const [isStartingCamera, setIsStartingCamera] = useState(false);
   const [cameraError, setCameraError] = useState<string | null>(null);
   const cameraInputRef = useRef<HTMLInputElement | null>(null);
+  const uploadInputRef = useRef<HTMLInputElement | null>(null);
+  const [imageRatio, setImageRatio] = useState<number | null>(null);
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const cameraStreamRef = useRef<MediaStream | null>(null);
   const selectionVersion = useRef(0);
@@ -184,6 +217,7 @@ const Index = () => {
 
   const resetPreview = () => {
     setImagePreview("");
+    setImageRatio(null);
     setPreviewObjectUrl((previousUrl) => {
       if (previousUrl) {
         URL.revokeObjectURL(previousUrl);
@@ -298,9 +332,6 @@ const Index = () => {
         const health = await getHealth();
         if (!isActive) return;
         setIsModelLoaded(health.model_loaded);
-        if (!health.model_loaded) {
-          toast.info("Model not loaded. Please load the model to start scanning.");
-        }
       } catch (error) {
         if (!isActive) return;
         const errorMessage = error instanceof Error ? error.message : "Cannot connect to server. Please ensure the backend is running.";
@@ -666,96 +697,179 @@ const Index = () => {
   };
 
   const rightPanelMeta = getRightPanelMeta(appState, scanResults, isDemo);
+  const topStatus = appState === "upload"
+    ? { label: isCheckingHealth ? "Connecting" : !isDemo && !isModelLoaded ? "Model not loaded" : "Ready", glyph: (isCheckingHealth ? "pending" : !isDemo && !isModelLoaded ? "review" : "done") as GlyphState }
+    : { label: rightPanelMeta.statusLabel, glyph: statusGlyph(rightPanelMeta.statusLabel) };
+  const backendStatus = isDemo
+    ? "Prepared samples, no backend"
+    : isCheckingHealth
+      ? "Connecting to backend"
+      : !configValid
+        ? "Backend URL not set"
+        : isModelLoaded
+          ? "Model loaded"
+          : "Model not loaded";
+  const activeFileName = appState === "upload" ? null : selectedFile?.name ?? null;
 
-  if (appState === "upload") {
-    return (
-      <div className="min-h-screen bg-background flex flex-col">
-        <StickyHeader mode={scanMode} onModeChange={handleModeChange} />
-        <div className="flex flex-1 items-center justify-center p-4">
-          <Card className="w-full max-w-2xl p-8 md:p-12 border shadow-sm">
-            <div className="text-center space-y-6">
-              <div className="inline-flex p-4 rounded-2xl bg-muted mb-4">
-                {isCheckingHealth ? (
-                  <Loader2 className="w-12 h-12 text-primary animate-spin" />
-                ) : (
-                  <Scan className="w-12 h-12 text-primary" />
-                )}
-              </div>
+  const handleDrop = (event: React.DragEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    const file = event.dataTransfer.files?.[0];
+    if (file && file.type.startsWith("image/")) {
+      queueFileForScan(file);
+    }
+  };
 
-              <div>
-                <h1 className="text-4xl md:text-5xl font-bold text-foreground mb-3">
-                  Scanseta
-                </h1>
-                <p className="text-muted-foreground text-lg">
-                  {isDemo ? "Choose a sample prescription to replay its prepared results. No model or backend is needed." : "Upload or capture your medical prescription to extract medication information"}
-                </p>
+  const sampleButtons = (variant: "sidebar" | "grid") =>
+    demoPrescriptions.map(({ fileName, medications }) => {
+      const isActive = activeFileName === fileName;
+      const summary = medications.map((m) => m.name.replace(/\s*\(.*\)$/, "")).join(", ");
+      const common = {
+        type: "button" as const,
+        "aria-label": `Scan sample ${fileName}`,
+        "aria-current": isActive ? ("true" as const) : undefined,
+        onClick: () => handleDemoImageSelect(fileName),
+        disabled: !canScan || isSelectingDemo,
+      };
+      return variant === "sidebar" ? (
+        <li key={fileName}>
+          <button
+            {...common}
+            className={`group flex w-full items-center gap-2.5 rounded-md px-2 py-1.5 text-left transition-colors duration-150 disabled:cursor-not-allowed disabled:opacity-40 focus-visible:outline-sidebar-ring ${
+              isActive ? "bg-sidebar-accent text-sidebar-accent-foreground" : "hover:bg-sidebar-accent/60 hover:text-sidebar-accent-foreground"
+            }`}
+          >
+            <img src={`/demo-prescriptions/${fileName}`} alt="" loading="lazy" className="h-8 w-7 shrink-0 rounded-[3px] bg-sidebar-accent object-cover opacity-90" />
+            <span className="min-w-0">
+              <span className="block truncate font-mono text-xs">{fileName.replace(/\.(jpg|png)$/, "")}</span>
+              <span className="block truncate text-[11px] text-sidebar-foreground/80">{summary}</span>
+            </span>
+          </button>
+        </li>
+      ) : (
+        <button
+          key={fileName}
+          {...common}
+          className="group overflow-hidden rounded-md border border-border bg-card text-left transition-shadow duration-150 hover:shadow-[0_2px_8px_hsl(228_20%_20%/0.08)] disabled:cursor-not-allowed disabled:opacity-50"
+        >
+          <img src={`/demo-prescriptions/${fileName}`} alt="" loading="lazy" className="h-24 w-full bg-muted object-cover" />
+          <span className="block truncate px-2.5 pt-2 font-mono text-xs text-foreground">{fileName.replace(/\.(jpg|png)$/, "")}</span>
+          <span className="block truncate px-2.5 pb-2 text-[11px] text-muted-foreground">{summary}</span>
+        </button>
+      );
+    });
+
+  return (
+    <div className="flex min-h-screen bg-background lg:h-screen lg:overflow-hidden">
+      <aside className="hidden w-[248px] shrink-0 flex-col bg-sidebar text-sidebar-foreground lg:flex">
+        <div className="flex h-12 items-center gap-2.5 px-4">
+          <BrandMark />
+          <h1 className="text-sm font-semibold tracking-[-0.01em] text-sidebar-accent-foreground">Scanseta</h1>
+        </div>
+        <div className="px-2">
+          <button
+            type="button"
+            onClick={handleScanAnother}
+            className="flex h-8 w-full items-center gap-2 rounded-md px-2 text-[13px] text-sidebar-accent-foreground transition-colors duration-150 hover:bg-sidebar-accent focus-visible:outline-sidebar-ring"
+          >
+            <Plus className="h-4 w-4 text-sidebar-foreground" />
+            New scan
+          </button>
+        </div>
+        <p className="mt-5 px-4 pb-1.5 text-[11px] font-medium text-sidebar-foreground/80">Sample prescriptions</p>
+        <ul className="min-h-0 flex-1 space-y-px overflow-y-auto px-2 pb-3">{sampleButtons("sidebar")}</ul>
+        <div className="space-y-2.5 border-t border-sidebar-border p-3">
+          <p className="flex items-center gap-2 px-1 text-[11px]">
+            <span className={`h-1.5 w-1.5 rounded-full ${isDemo ? "bg-sidebar-foreground" : isModelLoaded ? "bg-sidebar-primary" : "bg-[hsl(var(--review))]"}`} />
+            {backendStatus}
+          </p>
+          <ModeSwitch mode={scanMode} onModeChange={handleModeChange} />
+        </div>
+      </aside>
+
+      <div className="flex min-w-0 flex-1 flex-col">
+        <div className="flex items-center justify-between gap-3 bg-sidebar px-4 py-2.5 lg:hidden">
+          <div className="flex items-center gap-2">
+            <BrandMark />
+            <h1 className="text-sm font-semibold text-sidebar-accent-foreground">Scanseta</h1>
+          </div>
+          <ModeSwitch mode={scanMode} onModeChange={handleModeChange} />
+        </div>
+
+        <header className="flex h-12 shrink-0 items-center justify-between gap-3 border-b border-border px-4 md:px-5">
+          <nav aria-label="Breadcrumb" className="flex min-w-0 items-center gap-1.5 text-[13px]">
+            <span className="text-muted-foreground">Scans</span>
+            <ChevronRight className="h-3.5 w-3.5 shrink-0 text-muted-foreground/70" />
+            <span className="truncate font-medium text-foreground">{activeFileName ?? "New scan"}</span>
+            <span className="ml-2 hidden items-center gap-1.5 rounded-full border border-border px-2 py-0.5 text-xs text-muted-foreground sm:inline-flex">
+              <StatusGlyph state={topStatus.glyph} fraction={progress / 100} size={12} />
+              {topStatus.label}
+            </span>
+          </nav>
+          {appState !== "upload" && appState !== "results" && (
+            <Button variant="outline" size="sm" onClick={handleScanAnother} className="h-7 px-2.5 text-xs">
+              Scan Another
+            </Button>
+          )}
+        </header>
+
+        {appState === "upload" ? (
+          <main className="flex flex-1 flex-col overflow-y-auto lg:p-8">
+            <div
+              onDragOver={(event) => event.preventDefault()}
+              onDrop={handleDrop}
+              className="flex w-full flex-1 flex-col items-center justify-center px-5 py-12 text-center lg:rounded-xl lg:border lg:border-dashed lg:border-input lg:bg-canvas/50"
+            >
+              <div className="grid h-11 w-11 place-items-center rounded-lg bg-muted text-muted-foreground">
+                {isCheckingHealth ? <Loader2 className="h-5 w-5 animate-spin" /> : <ImageUp className="h-5 w-5" />}
               </div>
+              <h2 className="mt-4 text-lg font-semibold tracking-[-0.015em] text-foreground">Scan a prescription</h2>
+              <p className="mt-1.5 max-w-sm text-balance text-sm leading-relaxed text-muted-foreground">
+                {isDemo
+                  ? "Pick a sample prescription, or drop one of the sample images here."
+                  : "Upload or drop a photo of a handwritten prescription, or take one with the camera."}
+              </p>
 
               {!isDemo && !configValid && !isCheckingHealth && (
-                <div className="bg-destructive/10 border border-destructive/20 rounded-lg p-4 flex items-start gap-3">
-                  <AlertCircle className="w-5 h-5 text-destructive flex-shrink-0 mt-0.5" />
-                  <div className="text-left flex-1">
-                    <p className="text-sm font-semibold text-destructive mb-1">Configuration Error</p>
-                    <p className="text-sm text-destructive/90 mb-2">
-                      Backend API URL is not configured. Please set the <code className="bg-destructive/10 px-1 py-0.5 rounded text-xs">VITE_API_BASE_URL</code> environment variable.
+                <div className="mt-6 flex w-full max-w-lg gap-3 rounded-md bg-destructive/5 px-4 py-3 text-left ring-1 ring-inset ring-destructive/20">
+                  <AlertCircle className="mt-0.5 h-4 w-4 shrink-0 text-destructive" />
+                  <div className="min-w-0 text-[13px]">
+                    <p className="font-semibold text-foreground">Configuration Error</p>
+                    <p className="mt-0.5 text-foreground/80">
+                      The backend address is not set. Set <code className="font-mono text-xs">VITE_API_BASE_URL</code> and rebuild.
                     </p>
-                    <p className="text-xs text-destructive/80">
-                      Current API URL: <code className="bg-destructive/10 px-1 py-0.5 rounded">{config.apiBaseUrl || "(not set)"}</code>
+                    <p className="mt-1 truncate text-xs text-muted-foreground">
+                      Current: <code className="font-mono">{config.apiBaseUrl || "(not set)"}</code>
                     </p>
                   </div>
                 </div>
               )}
 
               {!isDemo && configValid && !isModelLoaded && !isCheckingHealth && (
-                <div className="bg-accent/10 border border-accent/20 rounded-lg p-4 flex items-start gap-3">
-                  <AlertCircle className="w-5 h-5 text-accent flex-shrink-0 mt-0.5" />
-                  <div className="text-left flex-1">
-                    <p className="text-sm font-semibold text-accent mb-1">Model Not Loaded</p>
-                    <p className="text-sm text-accent/90 mb-3">
-                      The AI model needs to be loaded before you can scan prescriptions.
-                    </p>
-                    <Button
-                      onClick={handleLoadModel}
-                      disabled={isLoadingModel}
-                      size="sm"
-                      className="bg-accent hover:bg-accent/90"
-                    >
-                      {isLoadingModel ? (
-                        <>
-                          <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                          Loading Model...
-                        </>
-                      ) : (
-                        "Load Model"
-                      )}
-                    </Button>
+                <div className="mt-6 flex w-full max-w-lg items-center gap-3 rounded-md bg-review-surface px-4 py-3 text-left ring-1 ring-inset ring-review/25">
+                  <StatusGlyph state="review" />
+                  <div className="min-w-0 flex-1 text-[13px]">
+                    <p className="font-semibold text-foreground">Model Not Loaded</p>
+                    <p className="mt-0.5 text-foreground/80">Load the AI model before scanning. This can take a few minutes.</p>
                   </div>
+                  <Button onClick={handleLoadModel} disabled={isLoadingModel} size="sm">
+                    {isLoadingModel ? (
+                      <>
+                        <Loader2 className="animate-spin" />
+                        Loading
+                      </>
+                    ) : (
+                      "Load Model"
+                    )}
+                  </Button>
                 </div>
               )}
 
-              <div className="grid gap-4 pt-8">
-                <label htmlFor="file-upload" className={!canScan ? "cursor-not-allowed" : "cursor-pointer"}>
-                  <input
-                    id="file-upload"
-                    type="file"
-                    accept="image/*"
-                    onChange={handleFileChange}
-                    className="hidden"
-                    disabled={!canScan}
-                  />
-                  <Button
-                    size="lg"
-                    className="w-full h-14 text-base"
-                    disabled={!canScan}
-                    asChild
-                  >
-                    <span>
-                      <Upload className="mr-2 h-5 w-5" />
-                      Upload Prescription Image
-                    </span>
-                  </Button>
-                </label>
-
+              <div className="mt-7 flex w-full flex-col gap-2.5 sm:flex-row sm:justify-center">
+                <input id="file-upload" ref={uploadInputRef} type="file" accept="image/*" onChange={handleFileChange} className="hidden" disabled={!canScan} />
+                <Button size="lg" disabled={!canScan} onClick={() => uploadInputRef.current?.click()}>
+                  <Upload />
+                  Upload Prescription Image
+                </Button>
                 <input
                   id="camera-capture"
                   ref={cameraInputRef}
@@ -767,217 +881,115 @@ const Index = () => {
                   className="hidden"
                   disabled={!canScan}
                 />
-                <Button
-                  variant="secondary"
-                  size="lg"
-                  className="w-full h-14 text-base"
-                  disabled={isDemo || !canScan || isStartingCamera}
-                  onClick={handleOpenCameraCapture}
-                >
-                  {isStartingCamera ? (
-                    <>
-                      <Loader2 className="mr-2 h-5 w-5 animate-spin" />
-                      Opening Camera...
-                    </>
-                  ) : (
-                    <>
-                      <Camera className="mr-2 h-5 w-5" />
-                      Capture with Camera
-                    </>
-                  )}
+                <Button variant="outline" size="lg" disabled={isDemo || !canScan || isStartingCamera} onClick={handleOpenCameraCapture}>
+                  {isStartingCamera ? <Loader2 className="animate-spin" /> : <Camera />}
+                  Capture with Camera
                 </Button>
-                {cameraError && (
-                  <p className="text-xs text-amber-700">{cameraError}</p>
-                )}
-                {isCameraOpen && (
-                  <div className="rounded-xl border border-border bg-card p-3 space-y-3">
-                    <video
-                      ref={videoRef}
-                      className="w-full max-h-[50vh] rounded-lg bg-muted object-cover"
-                      playsInline
-                      muted
-                      autoPlay
-                    />
-                    <div className="flex gap-3">
-                      <Button className="flex-1" onClick={handleCameraPhotoCapture}>
-                        Take Photo
-                      </Button>
-                      <Button variant="outline" className="flex-1" onClick={closeCameraCapture}>
-                        Cancel
-                      </Button>
-                    </div>
+              </div>
+
+              {cameraError && <p className="mt-3 text-xs text-review">{cameraError}</p>}
+              {isCameraOpen && (
+                <div className="mt-5 w-full max-w-lg space-y-3 rounded-lg border border-border bg-card p-3">
+                  <video ref={videoRef} className="max-h-[50vh] w-full rounded-md bg-muted object-cover" playsInline muted autoPlay />
+                  <div className="flex gap-2.5">
+                    <Button className="flex-1" onClick={handleCameraPhotoCapture}>Take Photo</Button>
+                    <Button variant="outline" className="flex-1" onClick={closeCameraCapture}>Cancel</Button>
                   </div>
-                )}
-              </div>
-
-              <div className="pt-2">
-                <p className="text-sm font-medium text-foreground mb-3">Demo prescriptions</p>
-                <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-                  {demoPrescriptions.map(({ fileName }) => (
-                    <button
-                      key={fileName}
-                      type="button"
-                      className="group relative rounded-lg overflow-hidden border bg-muted/30 disabled:opacity-50 disabled:cursor-not-allowed"
-                      aria-label={`Scan sample ${fileName}`}
-                      onClick={() => handleDemoImageSelect(fileName)}
-                      disabled={!canScan || isSelectingDemo}
-                    >
-                      <img
-                        src={`/demo-prescriptions/${fileName}`}
-                        alt={`Demo ${fileName}`}
-                        className="h-24 w-full object-cover transition-transform duration-200 group-hover:scale-[1.03]"
-                        loading="lazy"
-                      />
-                      <span className="absolute inset-x-0 bottom-0 bg-black/60 text-white text-[11px] px-2 py-1 truncate">
-                        {fileName}
-                      </span>
-                    </button>
-                  ))}
                 </div>
-                {isSelectingDemo && (
-                  <p className="mt-3 text-xs text-muted-foreground flex items-center justify-center gap-1.5">
-                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                    Loading demo image...
-                  </p>
-                )}
-              </div>
+              )}
 
-              <div className="pt-6 border-t border-border mt-8 space-y-3">
-                <p className="text-sm text-muted-foreground">
-                  {isDemo ? "Demo uploads must be unchanged copies of the samples above. Camera capture is available in Live mode." : "Supported formats: JPG, PNG, HEIC | Maximum file size: 10MB"}
+              <p className="mt-4 text-xs text-muted-foreground">
+                {isDemo ? "Camera capture is available in Live mode." : "JPG, PNG or HEIC, up to 10 MB."}
+              </p>
+              {isSelectingDemo && (
+                <p className="mt-3 flex items-center gap-1.5 text-xs text-muted-foreground">
+                  <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                  Loading sample image
                 </p>
-
-              </div>
+              )}
             </div>
-          </Card>
-        </div>
-      </div>
-    );
-  }
 
-  return (
-    <div className="min-h-screen bg-background flex flex-col">
-      <StickyHeader mode={scanMode} onModeChange={handleModeChange} />
-      <div className="flex-1 p-4 md:p-6">
-        <div className="mx-auto max-w-7xl h-full">
-          <motion.div
-            initial={{ opacity: 0, y: 8 }}
-            animate={{ opacity: 1, y: 0 }}
-            transition={{ duration: 0.25, ease: "easeOut" }}
-            className="grid h-full gap-4 lg:grid-cols-[1.15fr_0.85fr]"
-          >
-            <Card className="p-4 md:p-5 border shadow-sm overflow-hidden">
-              <div className="flex h-full flex-col gap-4">
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <ImageIcon className="h-4 w-4 text-primary" />
-                    <h2 className="text-sm font-semibold text-foreground">Image Preview</h2>
-                  </div>
-                  <Button variant="outline" size="sm" onClick={handleScanAnother}>
-                    Scan Another
-                  </Button>
-                </div>
-                <div className="flex-1 rounded-lg border bg-muted/30 overflow-hidden">
-                  {imagePreview ? (
+            <section className="border-t border-border px-4 py-6 lg:hidden" aria-label="Sample prescriptions">
+              <h3 className="mb-3 text-[13px] font-medium text-foreground">Sample prescriptions</h3>
+              <div className="grid grid-cols-2 gap-2.5 sm:grid-cols-4">{sampleButtons("grid")}</div>
+            </section>
+          </main>
+        ) : (
+          <main className="grid min-h-0 flex-1 lg:grid-cols-[minmax(0,1fr)_440px]">
+            <div className="relative min-h-[42vh] overflow-hidden bg-canvas lg:min-h-0">
+              {imagePreview ? (
+                <div className="absolute inset-0 grid place-items-center p-4 [container-type:size] md:p-6">
+                  <div
+                    className="relative max-h-full max-w-full"
+                    style={imageRatio ? { aspectRatio: imageRatio, width: `min(100cqw, calc(100cqh * ${imageRatio}))` } : undefined}
+                  >
                     <img
                       src={imagePreview}
-                      alt="Prescription preview"
-                      className="h-full w-full object-contain"
+                      alt="Prescription photo"
+                      onLoad={(event) => setImageRatio(event.currentTarget.naturalWidth / event.currentTarget.naturalHeight || null)}
+                      className="block h-full w-full object-contain"
                     />
-                  ) : (
-                    <div className="h-full w-full grid place-items-center text-sm text-muted-foreground">
-                      No image selected.
-                    </div>
-                  )}
-                </div>
-              </div>
-            </Card>
-
-            <div className="flex h-full min-h-0 flex-col gap-4">
-                <div className="rounded-xl border bg-card/80 px-4 py-3">
-                  <div className="flex items-start justify-between gap-3">
-                    <div className="space-y-1">
-                      <h2 className="text-base font-semibold leading-tight text-foreground">{rightPanelMeta.title}</h2>
-                      <p className="text-xs text-muted-foreground">{rightPanelMeta.subtitle}</p>
-                    </div>
-                    <span className={`inline-flex shrink-0 items-center rounded-full border px-2.5 py-1 text-[11px] font-semibold ${rightPanelMeta.statusClassName}`}>
-                      {rightPanelMeta.statusLabel}
-                    </span>
+                    {appState === "processing" && (
+                      <div aria-hidden="true" className="scan-line pointer-events-none absolute inset-x-0 h-[2px] bg-primary shadow-[0_0_0_1px_hsl(var(--primary)/0.15),0_6px_18px_hsl(var(--primary)/0.35)]" />
+                    )}
                   </div>
                 </div>
-
-                <div className="min-h-0 flex-1 overflow-y-auto pr-1">
-                  <AnimatePresence mode="wait">
-                    {appState === "processing" && (
-                      <motion.div
-                        key="processing"
-                        initial={{ opacity: 0, y: 8 }}
-                        animate={{ opacity: 1, y: 0 }}
-                        exit={{ opacity: 0, y: -8 }}
-                        transition={{ duration: 0.2 }}
-                      >
-                        <ProcessingScreen
-                          progress={progress}
-                          currentStep={currentStep}
-                          steps={activeProcessingSteps}
-                          simulated={isDemo}
-                        />
-                      </motion.div>
-                    )}
-
-                    {appState === "results" && scanResults && (
-                      <motion.div
-                        key="results"
-                        initial={{ opacity: 0, y: 8 }}
-                        animate={{ opacity: 1, y: 0 }}
-                        exit={{ opacity: 0, y: -8 }}
-                        transition={{ duration: 0.2 }}
-                      >
-                        <ResultsScreen
-                          onScanAnother={handleScanAnother}
-                          scanResults={scanResults}
-                        />
-                      </motion.div>
-                    )}
-
-                    {appState === "error" && (
-                      <motion.div
-                        key="error"
-                        initial={{ opacity: 0, y: 8 }}
-                        animate={{ opacity: 1, y: 0 }}
-                        exit={{ opacity: 0, y: -8 }}
-                        transition={{ duration: 0.2 }}
-                        className="space-y-4"
-                      >
-                        <h2 className="text-xl font-semibold">Scan Failed</h2>
-                        <p className="text-sm text-muted-foreground">
-                          {scanError ?? "An unexpected error occurred while processing this prescription."}
-                        </p>
-                        <div className="flex gap-3">
-                          <Button
-                            onClick={() => {
-                              if (selectedFile) {
-                                setProgress(0);
-                                setCurrentStep(0);
-                                setScanError(null);
-                                setAppState("processing");
-                              }
-                            }}
-                            disabled={!selectedFile}
-                          >
-                            Retry
-                          </Button>
-                          <Button variant="outline" onClick={handleScanAnother}>
-                            Scan Another
-                          </Button>
-                        </div>
-                      </motion.div>
-                    )}
-                  </AnimatePresence>
-                </div>
+              ) : (
+                <div className="grid h-full place-items-center text-sm text-muted-foreground">No image selected.</div>
+              )}
             </div>
-          </motion.div>
-        </div>
+
+            <section className="flex min-h-0 flex-col border-t border-border lg:border-l lg:border-t-0">
+              <div className="min-h-0 flex-1 overflow-y-auto pb-6">
+                <AnimatePresence mode="wait">
+                  {appState === "processing" && (
+                    <motion.div key="processing" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.15 }} className="p-5">
+                      <ProcessingScreen progress={progress} currentStep={currentStep} steps={activeProcessingSteps} simulated={isDemo} />
+                    </motion.div>
+                  )}
+
+                  {appState === "results" && scanResults && (
+                    <motion.div key="results" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.15 }}>
+                      <div className="px-5 pb-2 pt-5">
+                        <h2 className="text-[15px] font-semibold tracking-[-0.01em] text-foreground">{rightPanelMeta.title}</h2>
+                        <p className="mt-0.5 text-[13px] text-muted-foreground">{rightPanelMeta.subtitle}</p>
+                      </div>
+                      <ResultsScreen onScanAnother={handleScanAnother} scanResults={scanResults} />
+                    </motion.div>
+                  )}
+
+                  {appState === "error" && (
+                    <motion.div key="error" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.15 }} className="p-5">
+                      <div className="flex items-center gap-2">
+                        <StatusGlyph state="missing" />
+                        <h2 className="text-[15px] font-semibold text-foreground">Scan Failed</h2>
+                      </div>
+                      <p className="mt-1.5 text-[13px] leading-relaxed text-muted-foreground">
+                        {scanError ?? "Something went wrong while reading this prescription."} {rightPanelMeta.subtitle}
+                      </p>
+                      <div className="mt-4 flex gap-2.5">
+                        <Button
+                          onClick={() => {
+                            if (selectedFile) {
+                              setProgress(0);
+                              setCurrentStep(0);
+                              setScanError(null);
+                              setAppState("processing");
+                            }
+                          }}
+                          disabled={!selectedFile}
+                        >
+                          Retry
+                        </Button>
+                        <Button variant="outline" onClick={handleScanAnother}>Scan Another</Button>
+                      </div>
+                    </motion.div>
+                  )}
+                </AnimatePresence>
+              </div>
+            </section>
+          </main>
+        )}
       </div>
     </div>
   );
