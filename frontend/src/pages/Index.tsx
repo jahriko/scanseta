@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from "react";
 import { motion, AnimatePresence } from "framer-motion";
-import { Camera, Upload, Loader2, AlertCircle, Plus, ChevronRight, ImageUp, Files } from "lucide-react";
+import { Camera, Upload, Loader2, AlertCircle, Plus, ChevronRight, ImageUp, Files, BookOpen, ArrowUpRight } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import StatusGlyph, { GlyphState } from "@/components/StatusGlyph";
 import { toast } from "sonner";
@@ -160,6 +160,11 @@ const BrandMark = () => (
     <path d="M6 7.5h6.5M6 11h10M6 14.5h7.5" stroke="hsl(var(--sidebar-primary-foreground))" strokeWidth="1.8" strokeLinecap="round" />
   </svg>
 );
+
+const PAPER = {
+  title: "Benchmarking vision-language models for handwritten drug name recognition",
+  url: "https://www.researchgate.net/publication/403512182_Benchmarking_vision-language_models_for_handwritten_drug_name_recognition",
+};
 
 const ModeSwitch = ({ mode, onModeChange }: { mode: ScanMode; onModeChange: (mode: ScanMode) => void }) => (
   <div role="group" aria-label="Scan mode" className="grid grid-cols-2 rounded-md bg-sidebar-accent p-0.5">
@@ -779,6 +784,21 @@ const Index = () => {
         <p className="mt-5 px-4 pb-1.5 text-[11px] font-medium text-sidebar-foreground/80">Sample prescriptions</p>
         <ul className="min-h-0 flex-1 space-y-px overflow-y-auto px-2 pb-3">{sampleButtons("sidebar")}</ul>
         <div className="space-y-2.5 border-t border-sidebar-border p-3">
+          <a
+            href={PAPER.url}
+            target="_blank"
+            rel="noreferrer"
+            className="group flex gap-2.5 rounded-md px-1 py-1.5 text-sidebar-foreground transition-colors duration-150 hover:text-sidebar-accent-foreground focus-visible:outline-sidebar-ring"
+          >
+            <BookOpen className="mt-0.5 h-3.5 w-3.5 shrink-0" />
+            <span className="min-w-0 text-[11px] leading-snug">
+              <span className="flex items-center gap-1 font-medium text-sidebar-accent-foreground">
+                Read the research paper
+                <ArrowUpRight className="h-3 w-3 transition-transform duration-150 group-hover:-translate-y-px group-hover:translate-x-px" />
+              </span>
+              <span className="mt-0.5 line-clamp-2 block">{PAPER.title}</span>
+            </span>
+          </a>
           <p className="flex items-center gap-2 px-1 text-[11px]">
             <span className={`h-1.5 w-1.5 rounded-full ${isDemo ? "bg-sidebar-foreground" : isModelLoaded ? "bg-sidebar-primary" : "bg-[hsl(var(--review))]"}`} />
             {backendStatus}
@@ -829,6 +849,19 @@ const Index = () => {
                   ? "Demo mode replays prepared results for these eight real prescriptions. Switch to Live mode to upload or photograph your own."
                   : "Upload or drop a photo of a handwritten prescription, or take one with the camera."}
               </p>
+              <a
+                href={PAPER.url}
+                target="_blank"
+                rel="noreferrer"
+                className="group mt-4 block max-w-sm text-balance"
+              >
+                <span className="inline-flex items-center gap-1.5 text-[13px] font-medium text-primary underline-offset-4 group-hover:underline">
+                  <BookOpen className="h-3.5 w-3.5" />
+                  Read our research paper
+                  <ArrowUpRight className="h-3.5 w-3.5" />
+                </span>
+                <span className="mt-0.5 block text-xs leading-relaxed text-muted-foreground">{PAPER.title}</span>
+              </a>
 
               {!isDemo && !configValid && !isCheckingHealth && (
                 <div className="mt-6 flex w-full max-w-lg gap-3 rounded-md bg-destructive/5 px-4 py-3 text-left ring-1 ring-inset ring-destructive/20">

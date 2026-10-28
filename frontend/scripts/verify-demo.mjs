@@ -90,6 +90,9 @@ try {
   assert.equal(await page.getByRole("button", { name: "Upload Prescription Image" }).count(), 0);
   assert.equal(await page.getByRole("button", { name: "Capture with Camera" }).count(), 0);
   assert.equal(await page.getByText("Configuration Error", { exact: true }).count(), 0);
+  const paperLink = page.getByRole("link", { name: /Read our research paper/ });
+  assert.equal(await paperLink.getAttribute("href"), "https://www.researchgate.net/publication/403512182_Benchmarking_vision-language_models_for_handwritten_drug_name_recognition");
+  assert.equal(await paperLink.getAttribute("target"), "_blank");
   await page.screenshot({ path: fileURLToPath(new URL("gallery.png", output)), fullPage: true });
   for (const [name, medications, detail] of cases) {
     await sample(name).click();
