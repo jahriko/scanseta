@@ -7,12 +7,13 @@ interface ProcessingStep {
 }
 
 interface ProcessingScreenProps {
+  simulated?: boolean;
   progress: number;
   currentStep: number;
   steps: ProcessingStep[];
 }
 
-const ProcessingScreen = ({ progress, currentStep, steps }: ProcessingScreenProps) => {
+const ProcessingScreen = ({ progress, currentStep, steps, simulated = false }: ProcessingScreenProps) => {
   const activeStepLabel = steps[currentStep]?.label ?? "Preparing analysis";
 
   return (
@@ -20,11 +21,11 @@ const ProcessingScreen = ({ progress, currentStep, steps }: ProcessingScreenProp
       <div className="rounded-xl border bg-card/90 p-4 shadow-sm">
         <div className="inline-flex items-center gap-2 rounded-full border border-blue-500/30 bg-blue-500/10 px-3 py-1 text-xs font-semibold text-blue-700">
           <Loader2 className="h-3.5 w-3.5 animate-spin" />
-          Processing prescription
+          {simulated ? "Simulating prescription scan" : "Processing prescription"}
         </div>
-        <h2 className="mt-3 text-2xl font-semibold text-foreground">Analyzing Prescription</h2>
+        <h2 className="mt-3 text-2xl font-semibold text-foreground">{simulated ? "Replaying Sample Prescription" : "Analyzing Prescription"}</h2>
         <p className="mt-1 text-sm text-muted-foreground">
-          OCR extraction runs first, then FDA and PNDF validation continue in parallel.
+          {simulated ? "Replaying prepared results for this image. No AI model or live verification is running." : "OCR extraction runs first, then FDA and PNDF validation continue in parallel."}
         </p>
       </div>
 

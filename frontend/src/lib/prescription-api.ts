@@ -60,6 +60,7 @@ export interface PNDFEnrichmentItem {
 }
 
 export interface PrescriptionResponse {
+  demo?: { kind: "prepared"; sample: string; reviewNotes: string[] };
   success: boolean;
   medications: Medication[];
   raw_text?: string;

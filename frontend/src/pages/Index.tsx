@@ -8,8 +8,10 @@ import ProcessingScreen from "@/components/ProcessingScreen";
 import ResultsScreen from "@/components/ResultsScreen";
 import { getEnrichmentJobStatus, getHealth, loadModel, PrescriptionResponse, scanPrescription } from "@/lib/prescription-api";
 import { config, validateConfig } from "@/lib/config";
+import { DEMO_DURATION_MS, demoPrescriptions, simulatePrescription } from "@/lib/demo-prescriptions";
 
 type AppState = "upload" | "processing" | "results" | "error";
+type ScanMode = "demo" | "live";
 
 const processingSteps = [
   { label: "Uploading image to server", duration: 500 },
@@ -19,15 +21,11 @@ const processingSteps = [
 ];
 
 const terminalEnrichmentStatuses = new Set(["completed", "partial", "failed", "timed_out", "expired", "not_requested", "disabled"]);
-const demoPrescriptionImages = [
-  "RX000005.jpg",
-  "RX002290.jpg",
-  "RX002335.jpg",
-  "RX002336.jpg",
-  "RX002340.jpg",
-  "RX002347.jpg",
-  "RX002359.jpg",
-  "RX002364.png",
+const demoProcessingSteps = [
+  { label: "Matching the sample image", duration: DEMO_DURATION_MS / 4 },
+  { label: "Replaying the prepared transcription", duration: DEMO_DURATION_MS / 4 },
+  { label: "Adding review notes", duration: DEMO_DURATION_MS / 4 },
+  { label: "Preparing simulated results", duration: DEMO_DURATION_MS / 4 },
 ];
 
 const normalizeStatus = (value?: string | null): string => (value ?? "").trim().toLowerCase();
@@ -35,7 +33,16 @@ const normalizeStatus = (value?: string | null): string => (value ?? "").trim().
 const getRightPanelMeta = (
   appState: AppState,
   scanResults: PrescriptionResponse | null,
+  isDemo: boolean,
 ): { title: string; subtitle: string; statusLabel: string; statusClassName: string } => {
+  if (isDemo) {
+    return {
+      title: appState === "processing" ? "Scanning prescription" : appState === "error" ? "Sample not supported" : "Medication Review",
+      subtitle: appState === "processing" ? "Reading the prescription image." : appState === "error" ? "Choose one of the sample prescriptions." : "Extracted from the prescription image.",
+      statusLabel: appState === "processing" ? "Processing" : appState === "error" ? "Error" : "Complete",
+      statusClassName: appState === "processing" ? "border-blue-500/30 bg-blue-500/10 text-blue-700" : appState === "error" ? "border-destructive/30 bg-destructive/10 text-destructive" : "border-green-500/30 bg-green-500/10 text-green-700",
+    };
+  }
   if (appState === "processing") {
     return {
       title: "Live Analysis",
@@ -127,16 +134,25 @@ const getRightPanelMeta = (
   };
 };
 
-const StickyHeader = () => (
+const StickyHeader = ({ mode, onModeChange }: { mode: ScanMode; onModeChange: (mode: ScanMode) => void }) => (
   <header className="sticky top-0 z-50 border-b border-border bg-background/95 backdrop-blur">
-    <div className="mx-auto w-full max-w-7xl px-4 py-3 md:px-6">
-      <h1 className="text-3xl font-semibold tracking-tight text-foreground">Scanseta</h1>
-      <p className="text-gray-500 text-base">AI Prescription Scanner</p>
+    <div className="mx-auto flex w-full max-w-7xl flex-wrap items-center justify-between gap-3 px-4 py-3 md:px-6">
+      <div>
+        <h1 className="text-3xl font-semibold tracking-tight text-foreground">Scanseta</h1>
+        <p className="text-muted-foreground text-sm">{mode === "demo" ? "Demo mode" : "AI Prescription Scanner"}</p>
+      </div>
+      <div role="group" aria-label="Scan mode" className="flex gap-2">
+        <Button type="button" variant={mode === "demo" ? "default" : "outline"} aria-pressed={mode === "demo"} onClick={() => onModeChange("demo")}>Demo mode</Button>
+        <Button type="button" variant={mode === "live" ? "default" : "outline"} aria-pressed={mode === "live"} onClick={() => onModeChange("live")}>Live mode</Button>
+      </div>
     </div>
   </header>
 );
 
 const Index = () => {
+  const [scanMode, setScanMode] = useState<ScanMode>(config.defaultScanMode);
+  const isDemo = scanMode === "demo";
+  const activeProcessingSteps = isDemo ? demoProcessingSteps : processingSteps;
   const [appState, setAppState] = useState<AppState>("upload");
   const [imagePreview, setImagePreview] = useState<string>("");
   const [previewObjectUrl, setPreviewObjectUrl] = useState<string | null>(null);
@@ -144,7 +160,7 @@ const Index = () => {
   const [scanResults, setScanResults] = useState<PrescriptionResponse | null>(null);
   const [isModelLoaded, setIsModelLoaded] = useState<boolean>(false);
   const [isLoadingModel, setIsLoadingModel] = useState<boolean>(false);
-  const [isCheckingHealth, setIsCheckingHealth] = useState<boolean>(true);
+  const [isCheckingHealth, setIsCheckingHealth] = useState<boolean>(!isDemo);
   const [configValid, setConfigValid] = useState<boolean>(true);
   const [scanError, setScanError] = useState<string | null>(null);
   const [progress, setProgress] = useState(0);
@@ -156,6 +172,8 @@ const Index = () => {
   const cameraInputRef = useRef<HTMLInputElement | null>(null);
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const cameraStreamRef = useRef<MediaStream | null>(null);
+  const selectionVersion = useRef(0);
+  const canScan = isDemo || (isModelLoaded && configValid && !isCheckingHealth);
 
   const resetScanState = () => {
     setScanResults(null);
@@ -191,17 +209,19 @@ const Index = () => {
   };
 
   const queueFileForScan = (file: File) => {
-    if (!isModelLoaded) {
+    if (!canScan) {
       toast.error("Please load the model first before scanning.");
       return;
     }
 
+    const version = ++selectionVersion.current;
     resetPreview();
     setSelectedFile(file);
     resetScanState();
 
     const reader = new FileReader();
     reader.onloadend = () => {
+      if (version !== selectionVersion.current) return;
       setImagePreview(reader.result as string);
       setAppState("processing");
     };
@@ -255,7 +275,14 @@ const Index = () => {
   }, [appState, isCameraOpen]);
 
   useEffect(() => {
+    if (isDemo) {
+      setIsCheckingHealth(false);
+      setConfigValid(true);
+      return;
+    }
+    let isActive = true;
     const checkHealth = async () => {
+      setIsCheckingHealth(true);
       const validation = validateConfig();
       setConfigValid(validation.valid);
 
@@ -269,21 +296,24 @@ const Index = () => {
 
       try {
         const health = await getHealth();
+        if (!isActive) return;
         setIsModelLoaded(health.model_loaded);
         if (!health.model_loaded) {
           toast.info("Model not loaded. Please load the model to start scanning.");
         }
       } catch (error) {
+        if (!isActive) return;
         const errorMessage = error instanceof Error ? error.message : "Cannot connect to server. Please ensure the backend is running.";
         toast.error(errorMessage);
         console.error("Health check error:", error);
       } finally {
-        setIsCheckingHealth(false);
+        if (isActive) setIsCheckingHealth(false);
       }
     };
 
     checkHealth();
-  }, []);
+    return () => { isActive = false; };
+  }, [isDemo]);
 
   useEffect(() => {
     if (appState !== "processing" || !selectedFile) {
@@ -297,7 +327,7 @@ const Index = () => {
       try {
         let currentProgress = 0;
         let stepIndex = 0;
-        const totalDuration = processingSteps.reduce((sum, step) => sum + step.duration, 0);
+        const totalDuration = activeProcessingSteps.reduce((sum, step) => sum + step.duration, 0);
         const interval = 50;
 
         progressTimer = setInterval(() => {
@@ -312,14 +342,14 @@ const Index = () => {
 
           setProgress(currentProgress);
 
-          const stepThreshold = ((stepIndex + 1) / processingSteps.length) * 100;
-          if (currentProgress >= stepThreshold && stepIndex < processingSteps.length - 1) {
+          const stepThreshold = ((stepIndex + 1) / activeProcessingSteps.length) * 100;
+          if (currentProgress >= stepThreshold && stepIndex < activeProcessingSteps.length - 1) {
             stepIndex++;
             setCurrentStep(stepIndex);
           }
         }, interval);
 
-        const result = await scanPrescription(selectedFile);
+        const result = isDemo ? await simulatePrescription(selectedFile) : await scanPrescription(selectedFile);
 
         if (!isActive) {
           return;
@@ -330,7 +360,7 @@ const Index = () => {
         }
 
         setProgress(100);
-        setCurrentStep(processingSteps.length - 1);
+        setCurrentStep(activeProcessingSteps.length - 1);
         setScanResults(result);
         setTimeout(() => {
           if (isActive) {
@@ -344,7 +374,9 @@ const Index = () => {
 
         const errorMessage = error instanceof Error ? error.message : "Failed to process prescription";
 
-        if (errorMessage.includes("400") || errorMessage.includes("invalid")) {
+        if (isDemo) {
+          toast.error(errorMessage);
+        } else if (errorMessage.includes("400") || errorMessage.includes("invalid")) {
           toast.error("Invalid image file. Please upload a valid prescription image.");
         } else if (errorMessage.includes("503") || errorMessage.includes("model")) {
           toast.error("Model not loaded. Please wait and try again.");
@@ -371,10 +403,10 @@ const Index = () => {
         clearInterval(progressTimer);
       }
     };
-  }, [appState, selectedFile]);
+  }, [appState, selectedFile, isDemo, activeProcessingSteps]);
 
   useEffect(() => {
-    if (!scanResults?.enrichment_job_id) {
+    if (isDemo || !scanResults?.enrichment_job_id) {
       return;
     }
 
@@ -385,7 +417,6 @@ const Index = () => {
 
     const jobId = scanResults.enrichment_job_id;
     let isActive = true;
-    let pollTimer: ReturnType<typeof setInterval> | undefined;
     let isPollInFlight = false;
     let pollAttempts = 0;
     // Backend enrichment can take up to ~75s, so allow enough polls before
@@ -458,8 +489,8 @@ const Index = () => {
       }
     };
 
-    pollStatus();
-    pollTimer = setInterval(pollStatus, 1000);
+    const pollTimer = setInterval(pollStatus, 1000);
+    void pollStatus();
 
     return () => {
       isActive = false;
@@ -468,14 +499,17 @@ const Index = () => {
       }
     };
   }, [
+    isDemo,
     scanResults?.enrichment_job_id,
     scanResults?.enrichment_status,
   ]);
 
   const handleLoadModel = async () => {
+    const version = selectionVersion.current;
     setIsLoadingModel(true);
     try {
       const result = await loadModel();
+      if (version !== selectionVersion.current) return;
       if (result.success) {
         setIsModelLoaded(true);
         toast.success("Model loaded successfully!");
@@ -483,10 +517,11 @@ const Index = () => {
         toast.error("Failed to load model. Please try again.");
       }
     } catch (error) {
+      if (version !== selectionVersion.current) return;
       toast.error("Failed to load model. Please check the backend logs.");
       console.error("Model load error:", error);
     } finally {
-      setIsLoadingModel(false);
+      if (version === selectionVersion.current) setIsLoadingModel(false);
     }
   };
 
@@ -500,6 +535,7 @@ const Index = () => {
   };
 
   const handleOpenCameraCapture = async () => {
+    if (isDemo) return;
     if (!isModelLoaded) {
       toast.error("Please load the model first before scanning.");
       return;
@@ -573,15 +609,16 @@ const Index = () => {
   };
 
   const handleDemoImageSelect = async (fileName: string) => {
-    if (!isModelLoaded) {
+    if (!canScan) {
       toast.error("Please load the model first before scanning.");
       return;
     }
-    if (!configValid || isCheckingHealth) {
+    if (!isDemo && (!configValid || isCheckingHealth)) {
       return;
     }
 
     setIsSelectingDemo(true);
+    const version = ++selectionVersion.current;
     try {
       const response = await fetch(`/demo-prescriptions/${fileName}`);
       if (!response.ok) {
@@ -589,6 +626,7 @@ const Index = () => {
       }
 
       const blob = await response.blob();
+      if (version !== selectionVersion.current) return;
       const file = new File([blob], fileName, { type: blob.type || "image/jpeg" });
       const objectUrl = URL.createObjectURL(blob);
 
@@ -599,56 +637,40 @@ const Index = () => {
       resetScanState();
       setAppState("processing");
     } catch (error) {
+      if (version !== selectionVersion.current) return;
       const errorMessage = error instanceof Error ? error.message : "Could not load demo image.";
       toast.error(errorMessage);
     } finally {
-      setIsSelectingDemo(false);
+      if (version === selectionVersion.current) setIsSelectingDemo(false);
     }
   };
 
   const handleScanAnother = () => {
+    selectionVersion.current += 1;
+    setIsSelectingDemo(false);
     setAppState("upload");
     resetPreview();
     setSelectedFile(null);
     resetScanState();
   };
 
-  const handlePreviewResults = () => {
-    setScanResults({
-      success: true,
-      processing_time: 1.2,
-      patient_name: "Juan dela Cruz",
-      doctor_name: "Dr. Maria Santos",
-      date: "2026-05-20",
-      medications: [
-        { name: "Amoxicillin", dosage: "500mg", quantity: "21 caps", frequency: "TID", signa: "1 cap q8h x 7 days", confidence: 0.97, match_method: "exact" },
-        { name: "Paracetamol", dosage: "500mg", quantity: "10 tabs", frequency: "PRN", signa: "1 tab q4-6h for pain/fever", confidence: 0.95, match_method: "exact" },
-        { name: "Metformin HCl", dosage: "500mg", quantity: "30 tabs", frequency: "BD", signa: "1 tab BID with meals", confidence: 0.91, match_method: "fuzzy" },
-      ],
-      raw_text: "Rx:\nAmoxicillin 500mg caps #21\nSig: 1 cap q8h x 7 days\n\nParacetamol 500mg tabs #10\nSig: 1 tab q4-6h PRN pain/fever\n\nMetformin HCl 500mg tabs #30\nSig: 1 tab BID c meals",
-      enrichment_status: "completed",
-      can_enrich: true,
-      fda_verification: [
-        { query: "amoxicillin", found: true, best_match: { brand_name: "Amoxil", generic_name: "Amoxicillin", registration_number: "FDA-2021-0042" } },
-        { query: "paracetamol", found: true, best_match: { brand_name: "Biogesic", generic_name: "Paracetamol", registration_number: "FDA-2019-0118" } },
-        { query: "metformin hcl", found: false },
-      ],
-      pndf_enriched: [
-        { name: "amoxicillin", found: true, atc_code: "J01CA04" },
-        { name: "paracetamol", found: true, atc_code: "N02BE01" },
-        { name: "metformin hcl", found: true, atc_code: "A10BA02" },
-      ],
-    });
-    setImagePreview("");
-    setAppState("results");
+  const handleModeChange = (mode: ScanMode) => {
+    if (mode === scanMode) return;
+    toast.dismiss();
+    closeCameraCapture();
+    handleScanAnother();
+    setIsModelLoaded(false);
+    setIsLoadingModel(false);
+    setIsCheckingHealth(mode === "live");
+    setScanMode(mode);
   };
 
-  const rightPanelMeta = getRightPanelMeta(appState, scanResults);
+  const rightPanelMeta = getRightPanelMeta(appState, scanResults, isDemo);
 
   if (appState === "upload") {
     return (
       <div className="min-h-screen bg-background flex flex-col">
-        <StickyHeader />
+        <StickyHeader mode={scanMode} onModeChange={handleModeChange} />
         <div className="flex flex-1 items-center justify-center p-4">
           <Card className="w-full max-w-2xl p-8 md:p-12 border shadow-sm">
             <div className="text-center space-y-6">
@@ -665,11 +687,11 @@ const Index = () => {
                   Scanseta
                 </h1>
                 <p className="text-muted-foreground text-lg">
-                  Upload or capture your medical prescription to extract medication information
+                  {isDemo ? "Choose a sample prescription to replay its prepared results. No model or backend is needed." : "Upload or capture your medical prescription to extract medication information"}
                 </p>
               </div>
 
-              {!configValid && !isCheckingHealth && (
+              {!isDemo && !configValid && !isCheckingHealth && (
                 <div className="bg-destructive/10 border border-destructive/20 rounded-lg p-4 flex items-start gap-3">
                   <AlertCircle className="w-5 h-5 text-destructive flex-shrink-0 mt-0.5" />
                   <div className="text-left flex-1">
@@ -684,7 +706,7 @@ const Index = () => {
                 </div>
               )}
 
-              {configValid && !isModelLoaded && !isCheckingHealth && (
+              {!isDemo && configValid && !isModelLoaded && !isCheckingHealth && (
                 <div className="bg-accent/10 border border-accent/20 rounded-lg p-4 flex items-start gap-3">
                   <AlertCircle className="w-5 h-5 text-accent flex-shrink-0 mt-0.5" />
                   <div className="text-left flex-1">
@@ -712,19 +734,19 @@ const Index = () => {
               )}
 
               <div className="grid gap-4 pt-8">
-                <label htmlFor="file-upload" className={!isModelLoaded || isCheckingHealth || !configValid ? "cursor-not-allowed" : "cursor-pointer"}>
+                <label htmlFor="file-upload" className={!canScan ? "cursor-not-allowed" : "cursor-pointer"}>
                   <input
                     id="file-upload"
                     type="file"
                     accept="image/*"
                     onChange={handleFileChange}
                     className="hidden"
-                    disabled={!isModelLoaded || isCheckingHealth || !configValid}
+                    disabled={!canScan}
                   />
                   <Button
                     size="lg"
                     className="w-full h-14 text-base"
-                    disabled={!isModelLoaded || isCheckingHealth || !configValid}
+                    disabled={!canScan}
                     asChild
                   >
                     <span>
@@ -739,16 +761,17 @@ const Index = () => {
                   ref={cameraInputRef}
                   type="file"
                   accept="image/*"
+                  aria-label="Capture prescription image"
                   capture="environment"
                   onChange={handleFileChange}
                   className="hidden"
-                  disabled={!isModelLoaded || isCheckingHealth || !configValid}
+                  disabled={!canScan}
                 />
                 <Button
                   variant="secondary"
                   size="lg"
                   className="w-full h-14 text-base"
-                  disabled={!isModelLoaded || isCheckingHealth || !configValid || isStartingCamera}
+                  disabled={isDemo || !canScan || isStartingCamera}
                   onClick={handleOpenCameraCapture}
                 >
                   {isStartingCamera ? (
@@ -790,13 +813,14 @@ const Index = () => {
               <div className="pt-2">
                 <p className="text-sm font-medium text-foreground mb-3">Demo prescriptions</p>
                 <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
-                  {demoPrescriptionImages.map((fileName) => (
+                  {demoPrescriptions.map(({ fileName }) => (
                     <button
                       key={fileName}
                       type="button"
                       className="group relative rounded-lg overflow-hidden border bg-muted/30 disabled:opacity-50 disabled:cursor-not-allowed"
+                      aria-label={`Scan sample ${fileName}`}
                       onClick={() => handleDemoImageSelect(fileName)}
-                      disabled={!isModelLoaded || isCheckingHealth || !configValid || isSelectingDemo}
+                      disabled={!canScan || isSelectingDemo}
                     >
                       <img
                         src={`/demo-prescriptions/${fileName}`}
@@ -820,15 +844,9 @@ const Index = () => {
 
               <div className="pt-6 border-t border-border mt-8 space-y-3">
                 <p className="text-sm text-muted-foreground">
-                  Supported formats: JPG, PNG, HEIC | Maximum file size: 10MB
+                  {isDemo ? "Demo uploads must be unchanged copies of the samples above. Camera capture is available in Live mode." : "Supported formats: JPG, PNG, HEIC | Maximum file size: 10MB"}
                 </p>
-                <button
-                  type="button"
-                  onClick={handlePreviewResults}
-                  className="text-xs text-muted-foreground/50 hover:text-muted-foreground underline underline-offset-2 transition-colors"
-                >
-                  Preview result screen
-                </button>
+
               </div>
             </div>
           </Card>
@@ -839,7 +857,7 @@ const Index = () => {
 
   return (
     <div className="min-h-screen bg-background flex flex-col">
-      <StickyHeader />
+      <StickyHeader mode={scanMode} onModeChange={handleModeChange} />
       <div className="flex-1 p-4 md:p-6">
         <div className="mx-auto max-w-7xl h-full">
           <motion.div
@@ -901,7 +919,8 @@ const Index = () => {
                         <ProcessingScreen
                           progress={progress}
                           currentStep={currentStep}
-                          steps={processingSteps}
+                          steps={activeProcessingSteps}
+                          simulated={isDemo}
                         />
                       </motion.div>
                     )}
