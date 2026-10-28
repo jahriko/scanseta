@@ -9,3 +9,7 @@ backend/hf_home/
 # Runtime scraper artifacts
 backend/data/debug_*_page.html
 backend/data/pndf_cache.json
+# GPU PC script secrets and logs
+pc.env
+backend*.log
+tunnel*.log
