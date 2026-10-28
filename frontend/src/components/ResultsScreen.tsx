@@ -134,26 +134,26 @@ interface MedicationRowProps {
 const MedicationRow = ({ index, displayName, med, verification }: MedicationRowProps) => {
   const flagged = needsReview(med);
   const glyph = rowGlyph(flagged, verification);
-  const facts = [med?.quantity, med?.frequency].filter(Boolean) as string[];
   const hasAnyDetail = !!(med?.dosage || med?.quantity || med?.frequency || med?.signa);
+  const showVerification = verification.fda !== "none" || verification.pndf !== "none";
 
   return (
     <motion.li
-      initial={{ opacity: 0, y: 4 }}
-      animate={{ opacity: 1, y: 0 }}
-      transition={{ duration: 0.18, delay: Math.min(index * 0.04, 0.2), ease: [0.16, 1, 0.3, 1] }}
-      className={`grid grid-cols-[16px_minmax(0,1fr)_auto] gap-x-3 px-5 py-3.5 ${flagged ? "bg-review-surface" : ""}`}
+      id={`med-${index}`}
+      tabIndex={-1}
+      initial={{ opacity: 0, x: 8 }}
+      animate={{ opacity: 1, x: 0 }}
+      transition={{ duration: 0.22, delay: Math.min(index * 0.06, 0.3), ease: [0.16, 1, 0.3, 1] }}
+      className={`grid scroll-mt-4 grid-cols-[22px_minmax(0,1fr)_auto] gap-x-3.5 px-5 py-5 outline-none focus-visible:bg-muted ${flagged ? "bg-review-surface" : ""}`}
     >
-      <StatusGlyph state={glyph.state} label={glyph.label} className="mt-0.5" />
+      <StatusGlyph state={glyph.state} label={glyph.label} size={22} className="mt-0.5" />
       <div className="min-w-0">
-        <h4 className="break-words text-[15px] font-semibold leading-snug tracking-[-0.01em] text-foreground">{displayName}</h4>
-        {med?.signa && <p className="mt-1 text-sm leading-snug text-foreground/85">{med.signa}</p>}
-        {(facts.length > 0 || flagged || verification.fda !== "none" || verification.pndf !== "none") && (
-          <div className="mt-1.5 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-muted-foreground">
-            {flagged && <span className="font-medium text-review">Needs review</span>}
-            {facts.map((fact) => (
-              <span key={fact} className="tnum">{fact}</span>
-            ))}
+        <h4 className="break-words text-[19px] font-semibold leading-tight tracking-[-0.02em] text-foreground">{displayName}</h4>
+        {flagged && <p className="mt-1 text-[13px] font-semibold text-review">Needs review · check this line against the photo</p>}
+        {med?.signa && <p className="mt-2 text-[15px] leading-snug text-foreground">{med.signa}</p>}
+        {(med?.frequency || showVerification) && (
+          <div className="mt-2 flex flex-wrap items-center gap-x-3.5 gap-y-1 text-xs text-muted-foreground">
+            {med?.frequency && <span>{med.frequency}</span>}
             <VerificationMark label="FDA" state={verification.fda} />
             <VerificationMark label="PNDF" state={verification.pndf} />
           </div>
@@ -161,12 +161,13 @@ const MedicationRow = ({ index, displayName, med, verification }: MedicationRowP
         {!hasAnyDetail && <p className="mt-1 text-xs text-muted-foreground">No details extracted.</p>}
         {med?.match_method && <p className="mt-1 text-[11px] text-muted-foreground/80">via {med.match_method}</p>}
       </div>
-      <div className="text-right">
+      <div className="max-w-[6.5rem] text-right sm:max-w-[9.5rem]">
         {med?.dosage ? (
-          <span className="tnum font-mono text-[13px] font-medium text-foreground">{med.dosage}</span>
+          <p className="tnum text-[16px] font-semibold leading-tight tracking-[-0.02em] text-foreground sm:text-[20px]">{med.dosage}</p>
         ) : (
-          <span className="text-xs text-review">Strength not written</span>
+          <p className="text-[13px] font-semibold leading-tight text-review sm:text-[15px]">Strength not written</p>
         )}
+        {med?.quantity && <p className="tnum mt-1 text-[13px] text-muted-foreground">{med.quantity}</p>}
       </div>
     </motion.li>
   );
@@ -233,21 +234,56 @@ const ResultsScreen = ({ onScanAnother, scanResults }: ResultsScreenProps) => {
 
   return (
     <div className="flex flex-col">
-      <div className="flex flex-wrap items-center justify-between gap-3 px-5 pb-3">
-        <p className="text-[13px] text-muted-foreground">
-          <span className="font-medium text-foreground">
-            {count === 0 ? "No medications found" : count === 1 ? "1 medication found" : `${count} medications found`}
-          </span>
-          {reviewCount > 0 && (
-            <span className="text-review"> · {reviewCount === 1 ? "1 needs review" : `${reviewCount} need review`}</span>
+      <div className="px-5 pb-4">
+        <div className="flex items-start justify-between gap-3">
+          <div>
+            <p className="text-[22px] font-semibold leading-tight tracking-[-0.025em] text-foreground">
+              {count === 0 ? "No medications found" : count === 1 ? "1 medication found" : `${count} medications found`}
+            </p>
+            <p className="mt-1 text-[13px] text-muted-foreground">
+              {reviewCount > 0 ? (
+                <span className="font-semibold text-review">{reviewCount === 1 ? "1 needs review" : `${reviewCount} need review`}</span>
+              ) : count > 0 ? (
+                "Nothing flagged for review"
+              ) : null}
+              {isUsingFallback && <span> · Fallback parsing</span>}
+            </p>
+          </div>
+          {count > 0 && (
+            <Button type="button" variant="outline" size="sm" onClick={handleCopy} className="shrink-0 gap-1.5">
+              {copied ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
+              {copied ? "Copied" : "Copy list"}
+            </Button>
           )}
-          {isUsingFallback && <span> · Fallback parsing</span>}
-        </p>
-        {count > 0 && (
-          <Button type="button" variant="outline" size="sm" onClick={handleCopy} className="h-7 gap-1.5 px-2.5 text-xs">
-            {copied ? <Check className="h-3.5 w-3.5" /> : <Copy className="h-3.5 w-3.5" />}
-            {copied ? "Copied" : "Copy list"}
-          </Button>
+        </div>
+        {count > 1 && (
+          <div className="mt-4 flex flex-wrap gap-1.5" aria-label="Jump to a medicine">
+            {medicationsToDisplay.map((item, index) => {
+              const flagged = needsReview(item.medication);
+              const glyph = rowGlyph(
+                flagged,
+                getVerification(item.name, enrichmentStatus, scanResults.fda_verification, scanResults.pndf_enriched ?? scanResults.enriched_medications ?? scanResults.enriched),
+              );
+              return (
+                <button
+                  key={normalizeMedicationKey(item.name) || index}
+                  type="button"
+                  onClick={() => {
+                    const row = document.getElementById(`med-${index}`);
+                    row?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+                    row?.focus({ preventScroll: true });
+                  }}
+                  aria-label={`Go to medicine ${index + 1}, ${glyph.label.toLowerCase()}`}
+                  className={`flex h-8 items-center gap-1.5 rounded-md border px-2 text-xs font-medium transition-colors duration-150 ${
+                    flagged ? "border-review/40 bg-review-surface text-review hover:bg-review-surface/70" : "border-border text-foreground hover:bg-muted"
+                  }`}
+                >
+                  <StatusGlyph state={glyph.state} size={16} />
+                  <span className="tnum">{index + 1}</span>
+                </button>
+              );
+            })}
+          </div>
         )}
       </div>
 

@@ -26,24 +26,13 @@ const ProcessingScreen = ({ progress, currentStep, steps, simulated = false }: P
         </p>
       </div>
 
-      <div>
-        <div className="flex items-baseline justify-between text-[13px]">
-          <span className="text-muted-foreground">Progress</span>
-          <span className="tnum font-medium text-foreground">{Math.round(progress)}%</span>
+      <div className="flex items-center gap-4">
+        <StatusGlyph state="progress" fraction={progress / 100} size={52} />
+        <div className="min-w-0 flex-1">
+          <p className="tnum text-[32px] font-semibold leading-none tracking-[-0.03em] text-foreground">{Math.round(progress)}%</p>
+          <p className="mt-1.5 truncate text-[13px] text-muted-foreground">{steps[currentStep]?.label ?? "Preparing"}</p>
         </div>
-        <div
-          className="mt-2 h-1 overflow-hidden rounded-full bg-muted"
-          role="progressbar"
-          aria-valuenow={Math.round(progress)}
-          aria-valuemin={0}
-          aria-valuemax={100}
-          aria-label="Scan progress"
-        >
-          <div
-            className="h-full rounded-full bg-primary transition-[width] duration-200 ease-out"
-            style={{ width: `${progress}%` }}
-          />
-        </div>
+        <span className="sr-only" role="progressbar" aria-valuenow={Math.round(progress)} aria-valuemin={0} aria-valuemax={100} aria-label="Scan progress" />
       </div>
 
       <ol className="divide-y divide-border border-y border-border">
@@ -52,9 +41,9 @@ const ProcessingScreen = ({ progress, currentStep, steps, simulated = false }: P
           const isActive = index === currentStep;
           const fraction = isActive ? Math.min(1, Math.max(0.08, (progress - index * stepShare) / stepShare)) : 0;
           return (
-            <li key={step.label} className="flex items-center gap-3 py-2.5">
-              <StatusGlyph state={isDone ? "done" : isActive ? "progress" : "todo"} fraction={fraction} />
-              <span className={`text-[13px] ${isDone || isActive ? "text-foreground" : "text-muted-foreground"} ${isActive ? "font-medium" : ""}`}>
+            <li key={step.label} className="flex items-center gap-3 py-3">
+              <StatusGlyph state={isDone ? "done" : isActive ? "progress" : "todo"} fraction={fraction} size={18} />
+              <span className={`text-sm ${isDone || isActive ? "text-foreground" : "text-muted-foreground"} ${isActive ? "font-medium" : ""}`}>
                 {step.label}
               </span>
               <span className="tnum ml-auto text-xs text-muted-foreground">

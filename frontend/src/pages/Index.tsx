@@ -930,7 +930,20 @@ const Index = () => {
                       className="block h-full w-full object-contain"
                     />
                     {appState === "processing" && (
-                      <div aria-hidden="true" className="scan-line pointer-events-none absolute inset-x-0 h-[2px] bg-primary shadow-[0_0_0_1px_hsl(var(--primary)/0.15),0_6px_18px_hsl(var(--primary)/0.35)]" />
+                      <div aria-hidden="true" className="pointer-events-none absolute inset-0">
+                        <div
+                          className="absolute inset-x-0 top-0 bg-primary/10 mix-blend-multiply transition-[height] duration-200 ease-linear"
+                          style={{ height: `${progress}%` }}
+                        />
+                        <div
+                          className="absolute inset-x-0 bottom-0 bg-canvas/70 backdrop-grayscale transition-[top] duration-200 ease-linear"
+                          style={{ top: `${progress}%` }}
+                        />
+                        <div
+                          className="absolute inset-x-0 h-[3px] -translate-y-1/2 bg-primary shadow-[0_0_0_1px_hsl(var(--primary)/0.2),0_0_24px_4px_hsl(var(--primary)/0.45)] transition-[top] duration-200 ease-linear"
+                          style={{ top: `${progress}%` }}
+                        />
+                      </div>
                     )}
                   </div>
                 </div>
