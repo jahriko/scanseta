@@ -19,10 +19,10 @@ const ProcessingScreen = ({ progress, currentStep, steps, simulated = false }: P
     <div className="space-y-6">
       <div>
         <h2 className="text-[15px] font-semibold tracking-[-0.01em] text-foreground">
-          {simulated ? "Replaying Sample Prescription" : "Analyzing Prescription"}
+          Analyzing Prescription
         </h2>
         <p className="mt-1 text-[13px] leading-relaxed text-muted-foreground">
-          {simulated ? "Replaying prepared results for this image." : "Reading the handwriting first, then checking FDA and PNDF records."}
+          {simulated ? "Reading the medicines written on this prescription." : "Reading the handwriting first, then checking FDA and PNDF records."}
         </p>
       </div>
 

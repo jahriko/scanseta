@@ -93,7 +93,7 @@ try {
   await page.screenshot({ path: fileURLToPath(new URL("gallery.png", output)), fullPage: true });
   for (const [name, medications, detail] of cases) {
     await sample(name).click();
-    await page.getByRole("heading", { name: "Replaying Sample Prescription" }).waitFor();
+    await page.getByRole("heading", { name: "Analyzing Prescription" }).waitFor();
     assert(!(await page.locator("body").innerText()).includes("Analyzing image with AI model"));
     await result(name, medications, detail);
     if (name === "RX002335.jpg") {
@@ -121,7 +121,7 @@ try {
   pass("Unrelated upload named like a sample is rejected, with no medication results");
 
   await sample("RX000005.jpg").click();
-  await page.getByRole("heading", { name: "Replaying Sample Prescription" }).waitFor();
+  await page.getByRole("heading", { name: "Analyzing Prescription" }).waitFor();
   await page.getByRole("button", { name: "Scan Another", exact: true }).click();
   await sample("RX002290.jpg").click();
   await result("RX002290.jpg", ["Atorvastatin"], "40 mg");
@@ -147,7 +147,6 @@ try {
   await page.getByText("Model Not Loaded", { exact: true }).waitFor();
   releaseImage();
   await page.waitForLoadState("networkidle");
-  assert.equal(await page.getByRole("heading", { name: "Replaying Sample Prescription" }).count(), 0);
   assert.equal(await page.getByRole("heading", { name: "Analyzing Prescription" }).count(), 0);
   await page.unroute("**/demo-prescriptions/RX000005.jpg");
   pass("Switching modes during image loading cancels the old selection");

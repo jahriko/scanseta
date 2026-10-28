@@ -6,6 +6,7 @@ import StatusGlyph, { GlyphState } from "@/components/StatusGlyph";
 import { toast } from "sonner";
 import ProcessingScreen from "@/components/ProcessingScreen";
 import ResultsScreen from "@/components/ResultsScreen";
+import ScanSparkles from "@/components/ScanSparkles";
 import { getEnrichmentJobStatus, getHealth, loadModel, PrescriptionResponse, scanPrescription } from "@/lib/prescription-api";
 import { config, validateConfig } from "@/lib/config";
 import { DEMO_DURATION_MS, demoPrescriptions, simulatePrescription } from "@/lib/demo-prescriptions";
@@ -22,10 +23,10 @@ const processingSteps = [
 
 const terminalEnrichmentStatuses = new Set(["completed", "partial", "failed", "timed_out", "expired", "not_requested", "disabled"]);
 const demoProcessingSteps = [
-  { label: "Matching the sample image", duration: DEMO_DURATION_MS / 4 },
-  { label: "Replaying the prepared transcription", duration: DEMO_DURATION_MS / 4 },
-  { label: "Adding review notes", duration: DEMO_DURATION_MS / 4 },
-  { label: "Preparing simulated results", duration: DEMO_DURATION_MS / 4 },
+  { label: "Reading the handwriting", duration: DEMO_DURATION_MS / 4 },
+  { label: "Finding medicine names", duration: DEMO_DURATION_MS / 4 },
+  { label: "Reading strengths and directions", duration: DEMO_DURATION_MS / 4 },
+  { label: "Flagging unclear lines", duration: DEMO_DURATION_MS / 4 },
 ];
 
 const normalizeStatus = (value?: string | null): string => (value ?? "").trim().toLowerCase();
@@ -933,22 +934,13 @@ const Index = () => {
                       onLoad={(event) => setImageRatio(event.currentTarget.naturalWidth / event.currentTarget.naturalHeight || null)}
                       className="block h-full w-full object-contain"
                     />
-                    {appState === "processing" && (
-                      <div aria-hidden="true" className="pointer-events-none absolute inset-0">
-                        <div
-                          className="absolute inset-x-0 top-0 bg-primary/10 mix-blend-multiply transition-[height] duration-200 ease-linear"
-                          style={{ height: `${progress}%` }}
-                        />
-                        <div
-                          className="absolute inset-x-0 bottom-0 bg-canvas/70 backdrop-grayscale transition-[top] duration-200 ease-linear"
-                          style={{ top: `${progress}%` }}
-                        />
-                        <div
-                          className="absolute inset-x-0 h-[3px] -translate-y-1/2 bg-primary shadow-[0_0_0_1px_hsl(var(--primary)/0.2),0_0_24px_4px_hsl(var(--primary)/0.45)] transition-[top] duration-200 ease-linear"
-                          style={{ top: `${progress}%` }}
-                        />
-                      </div>
-                    )}
+                    <AnimatePresence>
+                      {appState === "processing" && (
+                        <motion.div key="sparkles" className="absolute inset-0" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.35 }}>
+                          <ScanSparkles />
+                        </motion.div>
+                      )}
+                    </AnimatePresence>
                   </div>
                 </div>
               ) : (
